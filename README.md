@@ -259,6 +259,7 @@ While running, these are logged:
 | Event | Level |
 | --- | --- |
 | Routing decision for an add or command, with the reason | INFO |
+| **A delete**, naming the instance and whether `deleteFiles` was set — always, unless `REQUEST_LOG=off` | INFO |
 | **An instance rejecting a forwarded request**, with the status and its own error message | WARNING |
 | An instance unreachable or answering a merge read with an error | WARNING |
 | A merge read getting an unexpected payload shape | WARNING |

@@ -250,3 +250,48 @@ def test_routed_commands_are_still_logged_at_info(client, caplog):
     caplog.set_level(_logging.INFO, logger="proxyseerr")
     client.post("/api/v3/command", json={"name": "MissingEpisodeSearch", "seriesId": OFFSET + 17})
     assert "Routing command 'MissingEpisodeSearch' to ANIME Sonarr" in caplog.text
+
+
+@responses.activate
+def test_delete_is_always_logged_even_when_only_errors_are(client, loud):
+    """The one call that destroys data must never be silent."""
+    responses.add(responses.DELETE, f"{ANI_URL}/api/v3/series/17", json={})
+
+    client.delete(f"/api/v3/series/{OFFSET + 17}?deleteFiles=true&addImportExclusion=false")
+
+    assert "Routing DELETE of series 17 to ANIME Sonarr (deleteFiles=true)" in loud.text
+    assert "DELETE /api/v3/series/" in loud.text
+    assert "-> 200 via ANIME Sonarr" in loud.text
+
+
+@responses.activate
+def test_delete_to_english_names_that_instance(client, loud):
+    responses.add(responses.DELETE, f"{ENG_URL}/api/v3/series/17", json={})
+    client.delete("/api/v3/series/17?deleteFiles=false")
+    assert "Routing DELETE of series 17 to ENGLISH Sonarr (deleteFiles=false)" in loud.text
+
+
+@responses.activate
+def test_movie_delete_is_logged_too(radarr_client, loud):
+    from conftest import ANI_MOVIE_URL
+
+    responses.add(responses.DELETE, f"{ANI_MOVIE_URL}/api/v3/movie/22", json={})
+    radarr_client.delete(f"/api/v3/movie/{OFFSET + 22}?deleteFiles=true")
+    assert "Routing DELETE of movie 22 to ANIME Radarr (deleteFiles=true)" in loud.text
+
+
+@responses.activate
+def test_request_log_off_still_silences_deletes(loud):
+    _, client = build_client(make_settings(request_log="off"), SONARR_SERVICE)
+    responses.add(responses.DELETE, f"{ENG_URL}/api/v3/series/17", json={})
+    client.delete("/api/v3/series/17")
+    # The routing line stays - it is not part of the access log - but no
+    # access line is added.
+    assert "-> 200 via" not in loud.text
+
+
+@responses.activate
+def test_successful_reads_stay_quiet(client, loud):
+    responses.add(responses.GET, f"{ANI_URL}/api/v3/series/17", json={"id": 17})
+    client.get(f"/api/v3/series/{OFFSET + 17}")
+    assert "-> 200" not in loud.text

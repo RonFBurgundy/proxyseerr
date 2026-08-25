@@ -192,7 +192,10 @@ def create_app(settings: Settings, service_config: Service) -> Flask:
         if settings.request_log == "off":
             return response
         failed = response.status_code >= 400
-        if not failed and settings.request_log != "all":
+        # A successful DELETE is still worth a line: it is the one call that
+        # removes a series and its files.
+        always = failed or request.method == "DELETE"
+        if not always and settings.request_log != "all":
             return response
         started = getattr(g, "request_started", None)
         elapsed = f"{(time.perf_counter() - started) * 1000:.0f}ms" if started else "?"
@@ -263,6 +266,16 @@ def create_app(settings: Settings, service_config: Service) -> Flask:
     @app.route(f"/api/v3/{resource}/<int:item_id>", methods=["GET", "PUT", "DELETE"])
     def item_by_id(item_id: int):
         instance, real_id = router.instance_for_id(item_id)
+        if request.method == "DELETE":
+            # The only request that destroys data, and Seerr sends it with
+            # deleteFiles=true. It is always recorded, whatever REQUEST_LOG says.
+            logger.info(
+                "Routing DELETE of %s %s to %s (deleteFiles=%s)",
+                resource,
+                real_id,
+                instance.label,
+                request.args.get("deleteFiles", "not set"),
+            )
         payload = service.json_body() if request.method == "PUT" else None
         return service.forward(
             instance,
