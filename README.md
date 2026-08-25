@@ -60,80 +60,152 @@ only exists on the English instance, the same label is created on the anime side
 No dummy root folder in the English instance is required — the merged lists give Seerr the real anime
 folders and profiles to pick from.
 
-## Sonarr and Radarr in one container
+## Setup
 
-Each service gets its own port, because Seerr configures them as separate servers and both speak the
-same `/api/v3/...` paths:
+Follow these in order. Each **Check** step tells you what you should see — if you
+don't see it, stop there rather than continuing, and the Troubleshooting section
+below names the likely cause.
 
-| Service | Default port | Configure with |
-| --- | --- | --- |
-| Sonarr pair | 5000 | `ENGLISH_SONARR_URL` / `_API_KEY`, `ANIME_SONARR_URL` / `_API_KEY` |
-| Radarr pair | 5001 | `ENGLISH_RADARR_URL` / `_API_KEY`, `ANIME_RADARR_URL` / `_API_KEY` |
+### Before you start
 
-Configure one pair or both. A service with all four variables blank simply isn't served; a service
-with *some* of them set is a startup error rather than a half-working proxy.
+- Two Sonarr instances, two Radarr instances, or both pairs. One pair alone is fine.
+- The **API key** for each instance: its *Settings → General → Security → API Key*.
+- The **LAN IP of the machine each instance runs on**, and each one's port.
+- Distinct root folders per pair, e.g. `/data/media/tv` and `/data/media/anime`. Two
+  instances sharing a root folder path cannot be told apart by path.
 
-## Security
+### Step 1 — Generate the proxy's own API key
 
-**The proxy holds admin API keys for every instance and attaches them to each forwarded request.**
-Anything that can reach its ports can do anything those keys can do. So:
+```bash
+openssl rand -hex 24
+```
 
-- `PROXY_API_KEY` is **required** — the container refuses to start without it. Generate one with
-  `openssl rand -hex 24` and enter the same value as the API key for both servers in Seerr. To run
-  open on a trusted LAN anyway, set `PROXY_ALLOW_ANONYMOUS=true` explicitly.
-- Keep it on your LAN. Don't port forward it.
+Keep it somewhere you can paste from twice. The proxy holds admin keys for every
+instance, so it refuses to start without one of its own.
 
-`SECURITY.md` lists the rest: header allowlists in both directions, the restricted forwarding
-surface, credential redaction in logs, and what `/proxy/health` will and won't tell an
-unauthenticated caller.
+### Step 2 — Install the container
 
-## Install
-
-### Unraid
-
-Recent Unraid versions removed the **Template Repositories** field, so fetch the template onto the
-box directly. From the Unraid terminal:
+**Unraid.** Recent versions removed the *Template Repositories* field, so fetch the
+template onto the box. From the Unraid terminal:
 
 ```bash
 curl -o /boot/config/plugins/dockerMan/templates-user/my-proxyseerr.xml \
   https://raw.githubusercontent.com/RonFBurgundy/proxyseerr/main/unraid/proxyseerr.xml
 ```
 
-Then **Docker → Add Container → Template → my-proxyseerr**, and fill in the proxy API key plus
-whichever service pairs you use. The WebUI button opens `/proxy/health`.
+Then **Docker → Add Container → Template → my-proxyseerr**, and fill in:
 
-Pin the version instead of tracking releases by changing the Repository field to
-`ghcr.io/ronfburgundy/proxyseerr:0.1.0`.
+| Field | Value |
+| --- | --- |
+| Proxy API Key | what Step 1 printed |
+| English Sonarr URL / API Key | your standard TV instance |
+| Anime Sonarr URL / API Key | your anime TV instance |
+| English Radarr URL / API Key | your standard movie instance, or leave all four blank |
+| Anime Radarr URL / API Key | your anime movie instance, or leave all four blank |
 
-> Passing the raw URL to `…/Docker/AddContainer?xmlTemplate=<url>` does **not** work — that
-> parameter only reads templates already present on the server.
+> **The mistake everyone makes:** the container is on a bridge network, so `localhost`
+> inside it means *the container*, not your server. Every URL must use the host's LAN
+> IP — `http://192.168.x.x:8989`, not `http://localhost:8989`.
 
-**The container needs no volumes.** It holds no state: nothing to map, nothing to back up.
-Every URL you enter must be reachable *from inside the container*, so on the default bridge
-network use the host's own LAN IP and each instance's port, never `localhost`.
+Leave everything else at its defaults. **No volumes are needed**: the proxy holds no
+state, so there is nothing to map and nothing to back up.
 
-### Docker Compose
+Passing the raw URL to `…/Docker/AddContainer?xmlTemplate=<url>` does *not* work; that
+parameter only reads templates already on the server.
+
+**Docker Compose.** Alternatively:
 
 ```bash
-cp .env.example .env      # fill in keys; .env is gitignored
+cp .env.example .env      # fill in your keys; .env is gitignored
 docker compose up -d
 ```
 
-### Image
+### Step 3 — Check: is the proxy up?
 
-Multi-arch (`linux/amd64`, `linux/arm64`), built and published by GitHub Actions.
+Open `http://<your-server>:5000/proxy/health?apikey=<your key>`. You want:
 
-| Tag | Moves when | Use it if |
+```json
+{"service": "sonarr", "status": "ok",
+ "instances": {"english": {"reachable": true, ...},
+               "anime":   {"reachable": true, ...}}}
+```
+
+Then read the container log. Every instance should be listed with its name and version:
+
+```
+[INFO] Authentication: API key required | request log: errors | anime ID offset: 1000000000
+[INFO] ENGLISH Sonarr -> http://sonarr.example.lan:8989 (Sonarr, v4.0.19.2979)
+[INFO] ANIME Sonarr   -> http://sonarr-anime.example.lan:8987 (Sonarr Anime, v4.0.19.2979)
+[INFO] sonarr proxy listening on 0.0.0.0:5000 (anime ID offset 1000000000)
+```
+
+**Do not continue** until every instance says `reachable` and no line says *is NOT
+responding*. If the container exited instead of starting, the log's last line says
+exactly which setting is wrong.
+
+### Step 4 — Point Seerr at the proxy
+
+In **Seerr → Settings → Services**:
+
+1. **Delete the second Sonarr server** and the second Radarr server. Exactly one of
+   each must remain, flagged as default.
+2. **Edit the remaining Sonarr**: hostname = your server's LAN IP, port **5000**, SSL
+   off, API key = the key from Step 1. Save.
+3. **Edit the remaining Radarr** the same way on port **5001**, if you configured that pair.
+
+### Step 5 — Check: did the merge work?
+
+Still in that server's settings, open the **Root Folder** and **Quality Profile**
+dropdowns. You should see entries from *both* instances, with the anime ones prefixed
+`[Anime]`.
+
+This is the step that proves the whole thing works. If you only see one instance's
+entries, stop — the anime instance is not answering, and the container log will name it.
+
+Then set the server's **defaults** to your English root folder and profile.
+
+### Step 6 — Add your override rules
+
+Under **Settings → Services → Rules**, add:
+
+| Condition | Set root folder to | Set quality profile to |
 | --- | --- | --- |
-| `latest` | a new release is tagged | you want releases automatically |
-| `0.1.0` | never | you want a fixed version you can roll back to |
-| `0.1` | a patch release in that line | you want fixes but not feature changes |
-| `main` | every push to `main` | you are testing unreleased work |
+| Original Language **is** Japanese | your anime path | an `[Anime] …` profile |
+| Keyword **contains** anime | your anime path | an `[Anime] …` profile |
 
-`latest` deliberately does **not** follow `main`. A push to `main` publishes only the `main` tag, so
-pulling `latest` can never hand you a development build.
+Either field alone is enough to route the request. Setting both is belt-and-braces.
 
-## Configuration
+### Step 7 — Check: request something
+
+Request an anime title, then a normal English one, and watch the container log:
+
+```
+Routing ADD 'Sailor Moon' to ANIME Sonarr (qualityProfileId is in the anime ID range)
+Routing ADD 'Family Guy' to ENGLISH Sonarr (root folder /data/media/tv exists only on the english instance)
+```
+
+Both lines name the instance *and* why it was chosen. If a title went the wrong way,
+that reason tells you which rule to fix.
+
+### Moving titles already on the wrong instance
+
+Seerr caches the instance-side ID, so anything requested before the proxy existed keeps
+pointing at whichever instance had it. The proxy cannot see or fix that — it only sees
+new requests. Per affected title: delete it from the wrong Sonarr/Radarr (keep the files
+if you plan to re-import them), delete the request in Seerr, then request it again.
+
+## Configuration reference
+
+Each service gets its own port, because Seerr configures them as separate servers and
+both speak the same `/api/v3/...` paths:
+
+| Service | Default port | Configure with |
+| --- | --- | --- |
+| Sonarr pair | 5000 | `ENGLISH_SONARR_URL` / `_API_KEY`, `ANIME_SONARR_URL` / `_API_KEY` |
+| Radarr pair | 5001 | `ENGLISH_RADARR_URL` / `_API_KEY`, `ANIME_RADARR_URL` / `_API_KEY` |
+
+Configure one pair or both. A pair with all four variables blank simply isn't served; a
+pair with *some* of them set is a startup error rather than a half-working proxy.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -154,6 +226,20 @@ pulling `latest` can never hand you a development build.
 | `REQUEST_LOG` | `errors` | `errors` logs every failed request, `all` logs every request, `off` disables the access log. |
 | `LOG_LEVEL` | `INFO` | `INFO` logs one line per routing decision. |
 
+### Image tags
+
+Multi-arch (`linux/amd64`, `linux/arm64`), built and published by GitHub Actions.
+
+| Tag | Moves when | Use it if |
+| --- | --- | --- |
+| `latest` | a new release is tagged, and weekly for base-image fixes | you want releases automatically |
+| `0.1.5` | never | you want a fixed version you can roll back to |
+| `0.1` | a patch release in that line | you want fixes but not feature changes |
+| `main` | every push to `main` | you are testing unreleased work |
+
+`latest` deliberately does **not** follow `main`. A push to `main` publishes only the
+`main` tag, so pulling `latest` can never hand you a development build.
+
 ### What `ANIME_LABEL_PREFIX` does and does not do
 
 It rewrites the `name` field of the anime instance's quality and language profiles in the
@@ -169,30 +255,18 @@ Sonarr/Radarr **tags** are a separate thing entirely: the proxy merges `/api/v3/
 decorating anything, and only ever creates a tag when Seerr sends one that exists on the other
 instance. Configure no tags in Seerr and nothing is tagged.
 
-## Seerr setup
+## Security
 
-1. **Start the container** and open `http://<host>:5000/proxy/health?apikey=<your key>` — every
-   instance should report `"reachable": true`.
-2. **In Seerr → Settings → Services**, delete the second (anime) Sonarr server and the second Radarr
-   server. One entry each should remain.
-3. **Edit the remaining servers**: Sonarr at `<host>:5000`, Radarr at `<host>:5001`, both with
-   `PROXY_API_KEY` as the API key. Save — the root folder and quality profile dropdowns should now
-   list entries from *both* instances, with the anime ones prefixed `[Anime]`.
-4. **Set the server defaults** to your English root folder and profile.
-5. **Add override rules** under `Settings → Services → Rules`:
-   - *Original Language is Japanese* → set root folder to the anime path **and** quality profile to
-     an `[Anime] …` profile.
-   - *Keyword contains anime* → the same targets.
+**The proxy holds admin API keys for every instance and attaches them to each forwarded
+request.** Anything that can reach its ports can do anything those keys can do. So:
 
-   Either field alone is enough to route the request; setting both is belt-and-braces.
-6. **Test with a fresh title** and watch the log:
-   `Routing ADD 'One Piece' to ANIME Sonarr (root folder /data/media/anime exists only on the anime instance)`.
+- `PROXY_API_KEY` is **required** — the container refuses to start without it. To run open
+  on a trusted LAN anyway, set `PROXY_ALLOW_ANONYMOUS=true` explicitly.
+- Keep it on your LAN. Don't port forward it.
 
-### Titles already tracked on the wrong instance
-
-Seerr caches the instance-side ID, so anything previously added keeps pointing at the English
-instance. For each affected title: delete it from the English Sonarr/Radarr (keep the files if you
-plan to re-import them on the anime side), delete the request in Seerr, then request it again.
+`SECURITY.md` lists the rest: header allowlists in both directions, the restricted forwarding
+surface, credential redaction in logs, and what `/proxy/health` will and won't tell an
+unauthenticated caller.
 
 ## How the proxy picks an instance
 
