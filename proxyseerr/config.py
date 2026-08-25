@@ -87,6 +87,7 @@ class Settings:
     anime_path_match: str
     anime_label_prefix: str
     timeout: float
+    connect_timeout: float
     proxy_api_key: str
     allow_anonymous: bool
     max_body_bytes: int
@@ -190,6 +191,8 @@ def load_settings() -> Settings:
     if proxy_api_key and len(proxy_api_key) < 16:
         raise ConfigError("PROXY_API_KEY must be at least 16 characters.")
 
+    read_timeout = _int_env("UPSTREAM_TIMEOUT", 20)
+
     request_log = _env("REQUEST_LOG", "errors").lower()
     if request_log not in REQUEST_LOG_MODES:
         raise ConfigError(
@@ -201,7 +204,8 @@ def load_settings() -> Settings:
         id_offset=_int_env("ANIME_ID_OFFSET", DEFAULT_ID_OFFSET),
         anime_path_match=_env("ANIME_ROOT_FOLDER_MATCH", "anime").lower(),
         anime_label_prefix=_env("ANIME_LABEL_PREFIX", "[Anime] "),
-        timeout=float(_int_env("UPSTREAM_TIMEOUT", 20)),
+        timeout=float(read_timeout),
+        connect_timeout=float(min(_int_env("UPSTREAM_CONNECT_TIMEOUT", 5), read_timeout)),
         proxy_api_key=proxy_api_key,
         allow_anonymous=allow_anonymous,
         max_body_bytes=_int_env("MAX_BODY_BYTES", DEFAULT_MAX_BODY_BYTES, minimum=1024),

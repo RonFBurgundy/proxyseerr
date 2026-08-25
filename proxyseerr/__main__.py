@@ -20,7 +20,7 @@ def probe_instances(settings: Settings) -> None:
     Without this the first sign that an instance is unreachable is a request
     failing minutes later, or a library that silently comes back half empty.
     """
-    upstream = Upstream(settings.timeout)
+    upstream = Upstream(settings.timeout, settings.connect_timeout)
     for service in settings.services:
         for instance in service.instances:
             payload = upstream.json_or_empty(

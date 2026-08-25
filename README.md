@@ -127,7 +127,8 @@ Multi-arch (`linux/amd64`, `linux/arm64`), built and published by GitHub Actions
 | `ANIME_ID_OFFSET` | `1000000000` | Size of the anime ID shift. Changing it after titles are tracked invalidates the IDs stored in Seerr. |
 | `ANIME_ROOT_FOLDER_MATCH` | `anime` | Fallback keyword for paths not owned by a known instance. |
 | `ANIME_LABEL_PREFIX` | `[Anime] ` | Prefix on anime profile names in Seerr's dropdowns. Root folder paths are never decorated. |
-| `UPSTREAM_TIMEOUT` | `20` | Seconds before an upstream call is abandoned. |
+| `UPSTREAM_TIMEOUT` | `20` | Seconds to wait for an instance to *respond*. Raise it on slow arrays — see Troubleshooting. |
+| `UPSTREAM_CONNECT_TIMEOUT` | `5` | Seconds to wait to *connect*. Kept short so a wrong host or port fails fast instead of holding a thread; capped at `UPSTREAM_TIMEOUT`. |
 | `MAX_BODY_BYTES` | `8388608` | Largest request body accepted. |
 | `REQUEST_LOG` | `errors` | `errors` logs every failed request, `all` logs every request, `off` disables the access log. |
 | `LOG_LEVEL` | `INFO` | `INFO` logs one line per routing decision. |
@@ -167,6 +168,38 @@ plan to re-import them on the anime side), delete the request in Seerr, then req
 
 Every decision is logged with its reason, so a misrouted title can be diagnosed from the container
 log alone.
+
+## Troubleshooting
+
+**A title went to the wrong instance.** Every add logs its reasoning — find the
+`Routing ADD '<title>' to …` line and it names which rule fired. If it says
+`default instance`, none of your rules matched: check that the Seerr rule sets the
+anime root folder *or* an `[Anime]` quality profile.
+
+**Timeouts, or a library that comes back partial.** On an Unraid array with spun-down
+disks, or a library of several thousand titles, an instance can take longer to answer
+than the 20 second default — and each merged read waits on both instances in turn. The
+proxy warns you before it becomes a failure:
+
+```
+[WARNING] ANIME Sonarr took 11.4s for GET /api/v3/series (timeout is 20s). If this
+          keeps climbing, raise UPSTREAM_TIMEOUT - a spun-down array or a large
+          library can outlast the default.
+```
+
+If you see that, set `UPSTREAM_TIMEOUT` to `45`. Connecting is timed separately and
+stays short, so raising it does not slow down detection of a wrong URL.
+
+**`[Anime]` profiles missing from Seerr's dropdowns.** The anime instance did not
+answer the profile read. Check `/proxy/health`, then the log for a line naming it.
+
+**Seerr says the server is down but the anime instance is fine.** Seerr's connection
+test hits `/api/v3/system/status`, which goes to the English instance only.
+
+**`/api/v3/languageprofile` returning 404 on Sonarr v4.** Expected — v4 replaced
+language profiles with Custom Formats, so both instances legitimately 404 and the proxy
+passes that status through. Nothing is broken, and an add payload without a
+`languageProfileId` is forwarded untouched.
 
 ## Logging
 

@@ -203,3 +203,22 @@ def test_total_outage_on_root_folders_is_also_an_error(client):
     responses.add(responses.GET, f"{ENG_URL}/api/v3/rootfolder", body=Down("refused"))
     responses.add(responses.GET, f"{ANI_URL}/api/v3/rootfolder", body=Down("refused"))
     assert client.get("/api/v3/rootfolder").status_code == 502
+
+
+@responses.activate
+def test_slow_upstream_calls_warn_before_they_time_out(client, loud):
+    service = client.application.extensions["proxyseerr"]
+    service.upstream.slow_after = 0  # any duration counts as slow
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/system/status", json={"version": "4"})
+
+    client.get("/api/v3/system/status")
+    assert "raise UPSTREAM_TIMEOUT" in loud.text
+    assert "ENGLISH Sonarr took" in loud.text
+
+
+def test_connect_timeout_is_separate_and_bounded_by_the_read_timeout():
+    from proxyseerr.upstream import Upstream
+
+    assert Upstream(timeout=20).connect_timeout == 5
+    assert Upstream(timeout=3).connect_timeout == 3  # never exceeds the read budget
+    assert Upstream(timeout=20).slow_after == 10

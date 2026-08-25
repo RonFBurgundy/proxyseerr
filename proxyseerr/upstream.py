@@ -123,8 +123,20 @@ def clean_params(params: dict[str, Any], instance: Instance) -> dict[str, Any]:
 
 
 class Upstream:
-    def __init__(self, timeout: float, pool_size: int = 32):
+    def __init__(
+        self,
+        timeout: float,
+        connect_timeout: float | None = None,
+        pool_size: int = 32,
+        slow_after: float | None = None,
+    ):
         self.timeout = timeout
+        # A wrong host or port should fail in seconds, not hold a thread for the
+        # full read budget; a real read on a spun-down array legitimately needs it.
+        self.connect_timeout = min(connect_timeout or 5.0, timeout)
+        # Warn well before the limit, so a slow instance is visible as a warning
+        # rather than only as an eventual timeout.
+        self.slow_after = slow_after if slow_after is not None else max(1.0, timeout / 2)
         self.session = requests.Session()
         # waitress serves 16 threads per port; the default pool of 10 would
         # discard and rebuild connections under a burst of merged reads.
@@ -147,18 +159,32 @@ class Upstream:
     ) -> requests.Response:
         url = instance.endpoint(path)
         try:
-            return self.session.request(
+            response = self.session.request(
                 method=method,
                 url=url,
                 headers=headers,
                 params=params,
                 json=json_data,
                 data=data,
-                timeout=self.timeout,
+                timeout=(self.connect_timeout, self.timeout),
                 allow_redirects=False,
             )
         except requests.exceptions.RequestException as exc:
             raise UpstreamError(instance, exc) from exc
+
+        elapsed = response.elapsed.total_seconds()
+        if elapsed >= self.slow_after:
+            logger.warning(
+                "%s took %.1fs for %s %s (timeout is %.0fs). If this keeps climbing, "
+                "raise UPSTREAM_TIMEOUT - a spun-down array or a large library can "
+                "outlast the default.",
+                instance.label,
+                elapsed,
+                method,
+                redact(path),
+                self.timeout,
+            )
+        return response
 
     def json(
         self,

@@ -29,7 +29,7 @@ class ProxyService:
         self.settings = settings
         self.service = service
         self.kind = service.kind
-        self.upstream = Upstream(settings.timeout)
+        self.upstream = Upstream(settings.timeout, settings.connect_timeout)
         self.router = Router(settings, service, self.upstream)
 
     # -- request plumbing -------------------------------------------------

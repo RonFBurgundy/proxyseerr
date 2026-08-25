@@ -147,3 +147,48 @@ def test_trailing_slash_does_not_redirect(client):
     responses.add(responses.GET, f"{ENG_URL}/api/v3/rootfolder", json=[])
     responses.add(responses.GET, f"{ANI_URL}/api/v3/rootfolder", json=[])
     assert client.get("/api/v3/rootfolder/").status_code == 200
+
+
+@responses.activate
+def test_add_without_language_profile_is_untouched(client):
+    """Sonarr v4 dropped language profiles; the key is simply absent."""
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/rootfolder", json=[])
+    responses.add(
+        responses.GET, f"{ANI_URL}/api/v3/rootfolder", json=[{"id": 1, "path": "/anime"}]
+    )
+    responses.add(responses.POST, f"{ANI_URL}/api/v3/series", json={"id": 9, "title": "Naruto"})
+
+    payload = {
+        "title": "Naruto",
+        "tvdbId": 78857,
+        "rootFolderPath": "/anime",
+        "qualityProfileId": OFFSET + 6,
+        "monitorNewItems": "all",
+        "seasons": [{"seasonNumber": 1, "monitored": True}],
+        "addOptions": {"ignoreEpisodesWithFiles": False, "searchForMissingEpisodes": True},
+    }
+    response = client.post("/api/v3/series", json=payload)
+    assert response.status_code == 200
+
+    sent = json.loads(responses.calls[-1].request.body)
+    assert "languageProfileId" not in sent
+    assert sent["qualityProfileId"] == 6
+    # Everything Seerr sent that is not an ID must survive verbatim.
+    assert sent["seasons"] == payload["seasons"]
+    assert sent["addOptions"] == payload["addOptions"]
+    assert sent["monitorNewItems"] == "all"
+
+
+@responses.activate
+def test_language_profile_id_is_translated_when_present(client):
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/rootfolder", json=[])
+    responses.add(
+        responses.GET, f"{ANI_URL}/api/v3/rootfolder", json=[{"id": 1, "path": "/anime"}]
+    )
+    responses.add(responses.POST, f"{ANI_URL}/api/v3/series", json={"id": 9})
+
+    client.post(
+        "/api/v3/series",
+        json={"title": "Naruto", "rootFolderPath": "/anime", "languageProfileId": OFFSET + 2},
+    )
+    assert json.loads(responses.calls[-1].request.body)["languageProfileId"] == 2

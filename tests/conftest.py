@@ -33,6 +33,7 @@ def make_settings(**overrides) -> Settings:
         anime_path_match="anime",
         anime_label_prefix="[Anime] ",
         timeout=5,
+        connect_timeout=5,
         proxy_api_key="",
         allow_anonymous=True,
         max_body_bytes=DEFAULT_MAX_BODY_BYTES,
