@@ -72,9 +72,19 @@ class AllInstancesFailed(RuntimeError):
     makes Seerr keep what it already knows.
     """
 
-    def __init__(self, path: str):
-        self.public_message = "No instance could be reached"
-        self.log_message = f"Every instance failed for {redact(path)}; returning 502"
+    def __init__(self, path: str, status: int | None = None):
+        # A status both instances agree on is their answer, not an outage:
+        # Sonarr v4 has no /languageprofile, so both legitimately 404.
+        self.status_code = status if status and 400 <= status < 500 else 502
+        self.public_message = (
+            f"Both instances returned HTTP {status}"
+            if self.status_code != 502
+            else "No instance could be reached"
+        )
+        self.log_message = (
+            f"Every instance failed for {redact(path)}; "
+            f"returning {self.status_code}"
+        )
         super().__init__(self.log_message)
 
 
@@ -113,9 +123,16 @@ def clean_params(params: dict[str, Any], instance: Instance) -> dict[str, Any]:
 
 
 class Upstream:
-    def __init__(self, timeout: float):
+    def __init__(self, timeout: float, pool_size: int = 32):
         self.timeout = timeout
         self.session = requests.Session()
+        # waitress serves 16 threads per port; the default pool of 10 would
+        # discard and rebuild connections under a burst of merged reads.
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=pool_size, pool_maxsize=pool_size
+        )
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
 
     def request(
         self,
@@ -169,13 +186,17 @@ class Upstream:
         *,
         headers: dict[str, str] | None = None,
         params: dict[str, Any] | None = None,
-    ) -> tuple[Any, bool]:
-        """GET that never raises, reporting whether the instance actually answered."""
+    ) -> tuple[Any, bool, int | None]:
+        """GET that never raises.
+
+        Returns ``(payload, answered, status)``; ``status`` is ``None`` when the
+        instance could not be contacted at all.
+        """
         try:
             payload, status = self.json(instance, "GET", path, headers=headers, params=params)
         except UpstreamError as exc:
             logger.warning("%s", exc.log_message)
-            return None, False
+            return None, False, None
         if status >= 400 or payload is None:
             logger.warning(
                 "%s returned HTTP %s for %s: %s",
@@ -184,8 +205,8 @@ class Upstream:
                 redact(path),
                 error_detail_from(payload),
             )
-            return None, False
-        return payload, True
+            return None, False, status
+        return payload, True, status
 
     def json_or_empty(
         self,
@@ -197,7 +218,7 @@ class Upstream:
         default: Any = None,
     ) -> Any:
         """``fetch`` for callers that treat an unreachable instance as empty."""
-        payload, ok = self.fetch(instance, path, headers=headers, params=params)
+        payload, ok, _status = self.fetch(instance, path, headers=headers, params=params)
         if not ok:
             return [] if default is None else default
         return payload

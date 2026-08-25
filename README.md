@@ -229,9 +229,20 @@ up, then drop back to `errors`.
   first time a request carrying that tag is routed there.
 - Seerr's connection test hits `/api/v3/system/status`, which goes to the English instance. If that
   instance is down, Seerr reports the server as down even when the anime instance is healthy.
+- Paths are matched case-insensitively, because Sonarr and Radarr are (they run on ASP.NET)
+  and Seerr relies on it — it asks for `/qualityProfile` but `/rootfolder`.
+- **Queue pagination is per-instance.** Each instance paginates its own queue, so the merged
+  result is page *n* of both stitched together. With a queue of a few dozen items — the normal
+  case — this is invisible; with hundreds, later pages will not line up.
+- **If both instances share the same root folder path**, ownership is ambiguous: routing falls
+  through to the `ANIME_ROOT_FOLDER_MATCH` keyword and then to the English instance. Give the two
+  instances distinct root folders.
+- Each merged read makes two upstream calls **sequentially**, so its latency is roughly the sum of
+  both instances' response times. At home-library scale that is tens of milliseconds; the proxy
+  itself holds no state and caches only root folders and tags, for 60 seconds.
 - Anything not explicitly handled falls through to a catch-all that still decodes IDs in the path and
-  query string, so unknown endpoints route correctly — within the `/api/...` surface the proxy is
-  willing to forward at all.
+  query string, and consults the request body for ID fields when neither carries one — that last part
+  is what makes Seerr's `PUT /episode/monitor` reach the right instance.
 
 ## Development
 

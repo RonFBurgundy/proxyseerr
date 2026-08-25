@@ -192,20 +192,22 @@ class ProxyService:
         If neither answered the caller gets an error rather than a merged empty
         result, so a total outage can never look like an empty library.
         """
-        english, english_ok = self.upstream.fetch(
+        english, english_ok, english_status = self.upstream.fetch(
             self.service.english,
             path,
             headers=self.headers_for(self.service.english),
             params=self.params_for(self.service.english),
         )
-        anime, anime_ok = self.upstream.fetch(
+        anime, anime_ok, anime_status = self.upstream.fetch(
             self.service.anime,
             path,
             headers=self.headers_for(self.service.anime),
             params=self.params_for(self.service.anime),
         )
+        g.upstream_label = "both instances"
         if not english_ok and not anime_ok:
-            raise AllInstancesFailed(path)
+            agreed = english_status if english_status == anime_status else None
+            raise AllInstancesFailed(path, agreed)
         if not english_ok or not anime_ok:
             missing = self.service.english if not english_ok else self.service.anime
             logger.warning(

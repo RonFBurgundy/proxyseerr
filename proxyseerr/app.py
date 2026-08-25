@@ -17,6 +17,26 @@ logger = logging.getLogger(__name__)
 
 HEALTH_PATH = "/proxy/health"
 
+
+class LowercasePathMiddleware:
+    """Make routing case-insensitive, the way the real APIs are.
+
+    Sonarr and Radarr run on ASP.NET, whose routes ignore case, and Seerr relies
+    on that: it asks for ``/api/v3/qualityProfile`` but ``/api/v3/rootfolder``.
+    Werkzeug matches case-sensitively, so without this the camelCase spellings
+    would miss the merge routes, fall through to the catch-all and quietly
+    return only the default instance's profiles.
+    """
+
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        path = environ.get("PATH_INFO", "")
+        if path != path.lower():
+            environ["PATH_INFO"] = path.lower()
+        return self.wsgi_app(environ, start_response)
+
 # The only prefixes ever forwarded upstream. Seerr speaks nothing else, and a
 # narrow surface keeps the proxy from being a general-purpose tunnel into a
 # server that trusts it.
@@ -59,12 +79,41 @@ def decode_query_ids(args, params: tuple[str, ...], offset: int) -> tuple[str, d
     return target, overrides
 
 
+def target_from_payload(payload, kind, offset: int) -> tuple[str, bool]:
+    """Find the owning instance from IDs carried in a request body.
+
+    Seerr's ``PUT /episode/monitor`` puts its episode IDs in the body with
+    nothing in the path or query, so without this it would always be sent to
+    the default instance.
+    """
+    target = ENGLISH
+    found = False
+    if not isinstance(payload, dict):
+        return target, found
+    for field in kind.command_id_fields:
+        if field == "id" or field not in payload:
+            continue
+        found = True
+        if ns.is_anime_id(payload[field], offset):
+            target = ANIME
+    for field in kind.command_list_fields:
+        values = payload.get(field)
+        if isinstance(values, list) and values:
+            found = True
+            if any(ns.is_anime_id(v, offset) for v in values):
+                target = ANIME
+    return target, found
+
+
 def create_app(settings: Settings, service_config: Service) -> Flask:
     kind = service_config.kind
     resource = kind.resource
 
     app = Flask(f"proxyseerr.{kind.name}")
+    app.wsgi_app = LowercasePathMiddleware(app.wsgi_app)
     app.config["MAX_CONTENT_LENGTH"] = settings.max_body_bytes
+    # Never answer a Seerr call with a 308 to a trailing-slash variant.
+    app.url_map.strict_slashes = False
     service = ProxyService(settings, service_config)
     router = service.router
     app.extensions["proxyseerr"] = service
@@ -73,7 +122,11 @@ def create_app(settings: Settings, service_config: Service) -> Flask:
         if not settings.proxy_api_key:
             return settings.allow_anonymous
         supplied = request.headers.get("X-Api-Key") or request.args.get("apikey") or ""
-        return hmac.compare_digest(supplied, settings.proxy_api_key)
+        # compare_digest raises TypeError on non-ASCII str, which a caller can
+        # trigger at will; comparing bytes keeps it constant-time and total.
+        return hmac.compare_digest(
+            supplied.encode("utf-8", "replace"), settings.proxy_api_key.encode("utf-8")
+        )
 
     @app.errorhandler(HTTPException)
     def handle_http_exception(exc: HTTPException):
@@ -95,7 +148,7 @@ def create_app(settings: Settings, service_config: Service) -> Flask:
     @app.errorhandler(AllInstancesFailed)
     def handle_total_failure(exc: AllInstancesFailed):
         logger.error("%s", exc.log_message)
-        return jsonify({"error": exc.public_message}), 502
+        return jsonify({"error": exc.public_message}), exc.status_code
 
     @app.errorhandler(413)
     def handle_too_large(_exc):
@@ -274,22 +327,7 @@ def create_app(settings: Settings, service_config: Service) -> Flask:
     @app.post("/api/v3/command")
     def command():
         payload = service.json_body()
-        offset = settings.id_offset
-        target = ENGLISH
-        has_target = False
-        if isinstance(payload, dict):
-            for field in kind.command_id_fields:
-                if field == "id" or field not in payload:
-                    continue
-                has_target = True
-                if ns.is_anime_id(payload[field], offset):
-                    target = ANIME
-            for field in kind.command_list_fields:
-                values = payload.get(field)
-                if isinstance(values, list) and values:
-                    has_target = True
-                    if any(ns.is_anime_id(v, offset) for v in values):
-                        target = ANIME
+        target, has_target = target_from_payload(payload, kind, settings.id_offset)
 
         name = payload.get("name", "unknown") if isinstance(payload, dict) else "unknown"
         if not has_target:
@@ -365,6 +403,12 @@ def create_app(settings: Settings, service_config: Service) -> Flask:
                 target = ANIME
             segments[-1] = str(real_id)
             clean = "/".join(segments)
+        elif target == ENGLISH and not overrides:
+            body_target, found = target_from_payload(
+                service.json_body(), kind, offset
+            )
+            if found:
+                target = body_target
 
         return service.forward(
             service_config.instance_for(target),
