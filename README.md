@@ -1,36 +1,36 @@
 # proxyseerr
 
 A small API routing proxy that lets **Seerr** (or Overseerr / Jellyseerr) drive **two Sonarr
-instances** through a single server connection — typically a standard English TV instance and a
-dedicated Anime instance configured per the [TRaSH Guides](https://trash-guides.info/).
+instances and two Radarr instances** through a single server connection each — typically a standard
+English library and a dedicated Anime library configured per the
+[TRaSH Guides](https://trash-guides.info/).
 
 ## The problem
 
 Seerr's override rules (`Settings → Services → Rules`) can change a request's root folder, quality
-profile and tags, but they **cannot change which Sonarr instance the request is sent to**. Every TV
-request is evaluated against whichever server is flagged as the default, so a rule that rewrites the
-path to `/data/media/anime` still posts that path to the *English* instance's database. Once a title
-has been tracked by the default instance, Seerr caches that instance's series ID and ignores the
-override entirely.
+profile and tags, but they **cannot change which instance the request is sent to**. Every request is
+evaluated against whichever server is flagged as the default, so a rule that rewrites the path to
+`/data/media/anime` still posts that path to the *English* instance's database. Once a title has been
+tracked by the default instance, Seerr caches that instance's ID and ignores the override entirely.
 
-Running two Sonarr instances properly — separate release profiles for dual-audio, separate naming
-rules, separate download clients — needs real instance switching.
+Running two instances properly — separate release profiles for dual-audio, separate naming rules,
+separate download clients — needs real instance switching.
 
 ## What proxyseerr does
 
-Seerr sees one Sonarr. The proxy sits behind it and splits the traffic:
+Seerr sees one Sonarr and one Radarr. The proxy sits behind them and splits the traffic:
 
 | Seerr asks for | proxyseerr does |
 | --- | --- |
-| the series library | merges both libraries into one list |
+| the library | merges both instances into one list |
 | root folders / quality profiles / language profiles / tags | merges both, so the anime options are selectable in Seerr's rules |
-| a series add | routes it to the instance that owns the chosen root folder or quality profile |
-| a lookup, refresh, search, queue check, episode list | routes it to the instance the series actually lives on |
+| an add | routes it to the instance that owns the chosen root folder or quality profile |
+| a lookup, refresh, search, queue check, episode or file list | routes it to the instance the title actually lives on |
 
-The trick is a single merged ID space. Sonarr hands out per-instance auto-increment IDs, so English
-series 42 and Anime series 42 both exist. Everything the proxy returns from the anime instance is
-shifted by `ANIME_ID_OFFSET` (default one billion), and every ID coming back from Seerr is decoded to
-`(instance, real id)` — which *is* the routing decision:
+The trick is a single merged ID space. Sonarr and Radarr hand out per-instance auto-increment IDs, so
+English series 42 and Anime series 42 both exist. Everything the proxy returns from the anime
+instance is shifted by `ANIME_ID_OFFSET` (default one billion), and every ID coming back from Seerr
+is decoded to `(instance, real id)` — which *is* the routing decision:
 
 ```
 Seerr sees                       proxyseerr forwards
@@ -52,8 +52,35 @@ External metadata IDs (`tvdbId`, `tmdbId`, `imdbId`) are never touched, so Seerr
 working. Tags are resolved by **label**: if a request routed to the anime instance carries a tag that
 only exists on the English instance, the same label is created on the anime side rather than dropped.
 
-No dummy root folder in the English instance is required — the merged lists give Seerr the real
-anime folders and profiles to pick from.
+No dummy root folder in the English instance is required — the merged lists give Seerr the real anime
+folders and profiles to pick from.
+
+## Sonarr and Radarr in one container
+
+Each service gets its own port, because Seerr configures them as separate servers and both speak the
+same `/api/v3/...` paths:
+
+| Service | Default port | Configure with |
+| --- | --- | --- |
+| Sonarr pair | 5000 | `ENGLISH_SONARR_URL` / `_API_KEY`, `ANIME_SONARR_URL` / `_API_KEY` |
+| Radarr pair | 5001 | `ENGLISH_RADARR_URL` / `_API_KEY`, `ANIME_RADARR_URL` / `_API_KEY` |
+
+Configure one pair or both. A service with all four variables blank simply isn't served; a service
+with *some* of them set is a startup error rather than a half-working proxy.
+
+## Security
+
+**The proxy holds admin API keys for every instance and attaches them to each forwarded request.**
+Anything that can reach its ports can do anything those keys can do. So:
+
+- `PROXY_API_KEY` is **required** — the container refuses to start without it. Generate one with
+  `openssl rand -hex 24` and enter the same value as the API key for both servers in Seerr. To run
+  open on a trusted LAN anyway, set `PROXY_ALLOW_ANONYMOUS=true` explicitly.
+- Keep it on your LAN. Don't port forward it.
+
+`SECURITY.md` lists the rest: header allowlists in both directions, the restricted forwarding
+surface, credential redaction in logs, and what `/proxy/health` will and won't tell an
+unauthenticated caller.
 
 ## Install
 
@@ -66,13 +93,13 @@ https://github.com/RonFBurgundy/proxyseerr
 ```
 
 Then add the container from **Add Container → Template → proxyseerr**, or apply
-`unraid/proxyseerr.xml` directly. Fill in both Sonarr URLs and API keys. The WebUI button opens
-`/proxy/health`, which reports whether both instances are reachable.
+`unraid/proxyseerr.xml` directly. Fill in the proxy API key plus whichever service pairs you use. The
+WebUI button opens `/proxy/health`.
 
 ### Docker Compose
 
 ```bash
-cp docker-compose.yml docker-compose.override.yml   # edit URLs and keys
+cp .env.example .env      # fill in keys; .env is gitignored
 docker compose up -d
 ```
 
@@ -89,28 +116,30 @@ Multi-arch (`linux/amd64`, `linux/arm64`), built and published by GitHub Actions
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENGLISH_SONARR_URL` | `http://localhost:8989` | Standard TV instance. This is the fallback for anything not matched as anime. |
-| `ENGLISH_SONARR_API_KEY` | — | Required. |
-| `ANIME_SONARR_URL` | `http://localhost:8987` | Anime instance. |
-| `ANIME_SONARR_API_KEY` | — | Required. |
-| `PROXY_PORT` | `5000` | Port Seerr connects to. |
-| `PROXY_API_KEY` | *(unset)* | If set, requests must carry this key. Use the same value as the API key in Seerr's Sonarr settings. |
+| `PROXY_API_KEY` | — | **Required** (min 16 chars) unless `PROXY_ALLOW_ANONYMOUS=true`. The key Seerr must present. |
+| `PROXY_ALLOW_ANONYMOUS` | `false` | Deliberately accept unauthenticated callers. |
+| `ENGLISH_SONARR_URL` / `_API_KEY` | — | Standard TV instance; the fallback for anything not matched as anime. |
+| `ANIME_SONARR_URL` / `_API_KEY` | — | Anime TV instance. |
+| `ENGLISH_RADARR_URL` / `_API_KEY` | — | Standard movie instance. |
+| `ANIME_RADARR_URL` / `_API_KEY` | — | Anime movie instance. |
+| `SONARR_PROXY_PORT` | `5000` | Also accepts the legacy `PROXY_PORT`. |
+| `RADARR_PROXY_PORT` | `5001` | Must differ from the Sonarr port. |
 | `ANIME_ID_OFFSET` | `1000000000` | Size of the anime ID shift. Changing it after titles are tracked invalidates the IDs stored in Seerr. |
 | `ANIME_ROOT_FOLDER_MATCH` | `anime` | Fallback keyword for paths not owned by a known instance. |
 | `ANIME_LABEL_PREFIX` | `[Anime] ` | Prefix on anime profile names in Seerr's dropdowns. Root folder paths are never decorated. |
 | `UPSTREAM_TIMEOUT` | `20` | Seconds before an upstream call is abandoned. |
+| `MAX_BODY_BYTES` | `8388608` | Largest request body accepted. |
 | `LOG_LEVEL` | `INFO` | `INFO` logs one line per routing decision. |
 
 ## Seerr setup
 
-1. **Start the container** and check `http://<host>:5000/proxy/health` — both instances should report
-   `"reachable": true`.
-2. **In Seerr → Settings → Services**, delete the second (anime) Sonarr server. Only one server
-   entry should remain.
-3. **Edit the remaining server** to point at the proxy (`<host>` / port `5000`). If you set
-   `PROXY_API_KEY`, enter it as the API key; otherwise any value works. Save — the root folder and
-   quality profile dropdowns should now list entries from *both* instances, with the anime ones
-   prefixed `[Anime]`.
+1. **Start the container** and open `http://<host>:5000/proxy/health?apikey=<your key>` — every
+   instance should report `"reachable": true`.
+2. **In Seerr → Settings → Services**, delete the second (anime) Sonarr server and the second Radarr
+   server. One entry each should remain.
+3. **Edit the remaining servers**: Sonarr at `<host>:5000`, Radarr at `<host>:5001`, both with
+   `PROXY_API_KEY` as the API key. Save — the root folder and quality profile dropdowns should now
+   list entries from *both* instances, with the anime ones prefixed `[Anime]`.
 4. **Set the server defaults** to your English root folder and profile.
 5. **Add override rules** under `Settings → Services → Rules`:
    - *Original Language is Japanese* → set root folder to the anime path **and** quality profile to
@@ -123,15 +152,15 @@ Multi-arch (`linux/amd64`, `linux/arm64`), built and published by GitHub Actions
 
 ### Titles already tracked on the wrong instance
 
-Seerr caches the instance-side series ID, so anything previously added keeps pointing at the English
-instance. For each affected title: delete the series from the English Sonarr (keep the files if you
+Seerr caches the instance-side ID, so anything previously added keeps pointing at the English
+instance. For each affected title: delete it from the English Sonarr/Radarr (keep the files if you
 plan to re-import them on the anime side), delete the request in Seerr, then request it again.
 
 ## Routing rules, in order
 
 1. A namespaced `qualityProfileId`, `languageProfileId`, `rootFolderId` or `id` in the payload.
 2. A `rootFolderPath` that exists on exactly one of the two instances.
-3. `seriesType: "anime"` in the payload.
+3. `seriesType: "anime"` in the payload (Sonarr only).
 4. `rootFolderPath` containing `ANIME_ROOT_FOLDER_MATCH`.
 5. Otherwise the English instance.
 
@@ -143,19 +172,22 @@ log alone.
 - If one instance is unreachable, merged reads return what the other one gave rather than failing —
   a temporarily offline anime instance shows as a partial library, not an empty one.
 - A title present on **both** instances appears twice in the merged library, and a warning naming its
-  `tvdbId` is logged. Keep each show on one instance.
-- Commands with no series or episode ID (e.g. `RefreshMonitoredDownloads`) are sent to both.
+  `tvdbId`/`tmdbId` is logged. Keep each title on one instance.
+- Commands with no title ID (e.g. `RefreshMonitoredDownloads`) are sent to both instances.
 - `POST /api/v3/tag` creates the tag on the English instance; the anime side gets the same label the
   first time a request carrying that tag is routed there.
+- Seerr's connection test hits `/api/v3/system/status`, which goes to the English instance. If that
+  instance is down, Seerr reports the server as down even when the anime instance is healthy.
 - Anything not explicitly handled falls through to a catch-all that still decodes IDs in the path and
-  query string, so unknown Sonarr endpoints route correctly.
+  query string, so unknown endpoints route correctly — within the `/api/...` surface the proxy is
+  willing to forward at all.
 
 ## Development
 
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest -q
-python -m proxyseerr          # serves on PROXY_PORT with waitress
+python -m proxyseerr          # serves each configured pair on its port
 ```
 
 Or without a local Python:
@@ -167,9 +199,11 @@ docker run --rm -v "$PWD":/src -w /src python:3.12-slim \
 
 | Module | Responsibility |
 | --- | --- |
-| `proxyseerr/config.py` | environment → `Settings` |
-| `proxyseerr/namespace.py` | ID encode/decode, per-resource field lists |
-| `proxyseerr/upstream.py` | HTTP to Sonarr, header hygiene |
+| `proxyseerr/kinds.py` | what differs between a Sonarr pair and a Radarr pair |
+| `proxyseerr/config.py` | environment → validated `Settings` |
+| `proxyseerr/namespace.py` | ID encode/decode |
+| `proxyseerr/upstream.py` | HTTP to the instances, header allowlists, redaction |
 | `proxyseerr/routing.py` | which instance owns this request, tag translation |
 | `proxyseerr/service.py` | merge, translate, forward |
-| `proxyseerr/app.py` | the Sonarr v3 route surface |
+| `proxyseerr/app.py` | the v3 route surface, auth, path allowlist |
+| `proxyseerr/healthcheck.py` | container healthcheck entrypoint |

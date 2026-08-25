@@ -11,17 +11,22 @@
   <Project>https://github.com/RonFBurgundy/proxyseerr</Project>
   <Overview>
     A lightweight API routing proxy that lets Seerr (or Overseerr/Jellyseerr) drive two Sonarr
-    instances through a single server connection - typically a standard English TV instance and a
-    dedicated Anime instance set up per the TRaSH Guides.
+    instances and two Radarr instances through a single server connection each - typically a
+    standard English library and a dedicated Anime library set up per the TRaSH Guides.
 
     Seerr can override a request's root folder and quality profile, but it cannot switch which
-    Sonarr instance a request is sent to. proxyseerr sits in between: it presents one merged
-    Sonarr API (both libraries, both root folders, both quality profiles), and routes each add,
+    instance a request is sent to. proxyseerr sits in between: it presents one merged API per
+    service (both libraries, both root folders, both quality profiles), and routes each add,
     lookup, search command and queue call to the instance that actually owns it. Anime-side IDs
     are offset so the two instances never collide in Seerr's database.
 
-    Point Seerr's single Sonarr server at this container, pick the anime root folder or the
-    [Anime] quality profile in a Seerr override rule, and the request lands on the anime instance.
+    Point Seerr's Sonarr server at port 5000 and its Radarr server at port 5001, pick the anime
+    root folder or the [Anime] quality profile in a Seerr override rule, and the request lands on
+    the anime instance. Configure only the Sonarr pair or only the Radarr pair if you only need
+    one of them.
+
+    The proxy carries admin API keys for your servers, so it requires an API key of its own -
+    generate one with `openssl rand -hex 24` and enter the same value in Seerr.
   </Overview>
   <Category>MediaApp:Video MediaServer:Video Tools:Utilities</Category>
   <WebUI>http://[IP]:[PORT:5000]/proxy/health</WebUI>
@@ -34,15 +39,21 @@
   <DonateText/>
   <DonateLink/>
   <Requires/>
-  <Config Name="Proxy Port" Target="5000" Default="5000" Mode="tcp" Description="Port Seerr connects to. Use this as the Sonarr port inside Seerr." Type="Port" Display="always" Required="true" Mask="false">5000</Config>
-  <Config Name="English Sonarr URL" Target="ENGLISH_SONARR_URL" Default="http://192.168.1.10:8989" Mode="" Description="Base URL of your standard TV Sonarr instance. This is the default instance: anything not matched as anime goes here." Type="Variable" Display="always" Required="true" Mask="false"></Config>
-  <Config Name="English Sonarr API Key" Target="ENGLISH_SONARR_API_KEY" Default="" Mode="" Description="API key from the standard TV Sonarr (Settings - General - Security)." Type="Variable" Display="always" Required="true" Mask="true"></Config>
-  <Config Name="Anime Sonarr URL" Target="ANIME_SONARR_URL" Default="http://192.168.1.10:8987" Mode="" Description="Base URL of your dedicated Anime Sonarr instance." Type="Variable" Display="always" Required="true" Mask="false"></Config>
-  <Config Name="Anime Sonarr API Key" Target="ANIME_SONARR_API_KEY" Default="" Mode="" Description="API key from the Anime Sonarr instance." Type="Variable" Display="always" Required="true" Mask="true"></Config>
-  <Config Name="Proxy API Key" Target="PROXY_API_KEY" Default="" Mode="" Description="Optional. If set, the proxy only accepts requests carrying this key - enter the same value as the API key in Seerr's Sonarr settings. Leave blank to accept any caller (fine on a trusted LAN)." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Sonarr Proxy Port" Target="5000" Default="5000" Mode="tcp" Description="Port Seerr connects to for TV. Use this as the Sonarr port inside Seerr." Type="Port" Display="always" Required="true" Mask="false">5000</Config>
+  <Config Name="Radarr Proxy Port" Target="5001" Default="5001" Mode="tcp" Description="Port Seerr connects to for movies. Use this as the Radarr port inside Seerr." Type="Port" Display="always" Required="false" Mask="false">5001</Config>
+  <Config Name="Proxy API Key" Target="PROXY_API_KEY" Default="" Mode="" Description="Required. Generate with `openssl rand -hex 24` and enter the same value as the API key for both servers in Seerr. The proxy holds your Sonarr/Radarr admin keys, so it will not start unauthenticated unless PROXY_ALLOW_ANONYMOUS is set." Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="English Sonarr URL" Target="ENGLISH_SONARR_URL" Default="http://192.168.1.10:8989" Mode="" Description="Base URL of your standard TV Sonarr instance. This is the default instance: anything not matched as anime goes here. Leave all four Sonarr fields blank to run Radarr only." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="English Sonarr API Key" Target="ENGLISH_SONARR_API_KEY" Default="" Mode="" Description="API key from the standard TV Sonarr (Settings - General - Security)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Anime Sonarr URL" Target="ANIME_SONARR_URL" Default="http://192.168.1.10:8987" Mode="" Description="Base URL of your dedicated Anime Sonarr instance." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Anime Sonarr API Key" Target="ANIME_SONARR_API_KEY" Default="" Mode="" Description="API key from the Anime Sonarr instance." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="English Radarr URL" Target="ENGLISH_RADARR_URL" Default="http://192.168.1.10:7878" Mode="" Description="Base URL of your standard movie Radarr instance. Leave all four Radarr fields blank to run Sonarr only." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="English Radarr API Key" Target="ENGLISH_RADARR_API_KEY" Default="" Mode="" Description="API key from the standard movie Radarr instance." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Anime Radarr URL" Target="ANIME_RADARR_URL" Default="http://192.168.1.10:7879" Mode="" Description="Base URL of your dedicated anime movie Radarr instance." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Anime Radarr API Key" Target="ANIME_RADARR_API_KEY" Default="" Mode="" Description="API key from the anime movie Radarr instance." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Allow Anonymous" Target="PROXY_ALLOW_ANONYMOUS" Default="false" Mode="" Description="Set to true only if you deliberately want the proxy to accept any caller on your LAN without an API key. Leaving this false and setting a Proxy API Key is strongly preferred." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
   <Config Name="Anime Root Folder Match" Target="ANIME_ROOT_FOLDER_MATCH" Default="anime" Mode="" Description="Fallback keyword. If a request's root folder path contains this string and the path is not owned by a known instance, it is routed to the anime instance." Type="Variable" Display="advanced" Required="false">anime</Config>
   <Config Name="Anime Label Prefix" Target="ANIME_LABEL_PREFIX" Default="[Anime] " Mode="" Description="Prefix added to anime quality/language profile names so they are distinguishable in Seerr's dropdowns." Type="Variable" Display="advanced" Required="false">[Anime] </Config>
   <Config Name="Anime ID Offset" Target="ANIME_ID_OFFSET" Default="1000000000" Mode="" Description="Amount anime-side IDs are shifted by so the two instances share one ID space. Only change this before adding anything through the proxy - changing it later invalidates the IDs already stored in Seerr." Type="Variable" Display="advanced" Required="false">1000000000</Config>
-  <Config Name="Upstream Timeout" Target="UPSTREAM_TIMEOUT" Default="20" Mode="" Description="Seconds to wait for a Sonarr instance before giving up." Type="Variable" Display="advanced" Required="false">20</Config>
+  <Config Name="Upstream Timeout" Target="UPSTREAM_TIMEOUT" Default="20" Mode="" Description="Seconds to wait for an instance before giving up." Type="Variable" Display="advanced" Required="false">20</Config>
   <Config Name="Log Level" Target="LOG_LEVEL" Default="INFO" Mode="" Description="DEBUG, INFO, WARNING or ERROR. INFO logs one line per routing decision." Type="Variable" Display="advanced" Required="false">INFO</Config>
 </Container>

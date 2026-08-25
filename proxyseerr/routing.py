@@ -1,26 +1,24 @@
-"""Deciding which Sonarr instance a request belongs to."""
+"""Deciding which instance of a pair a request belongs to."""
 from __future__ import annotations
 
 import logging
 import time
 from typing import Any
 
-from .config import Instance, Settings
-from .namespace import ANIME, ENGLISH, decode_id, is_anime_id, strip_prefix
+from .config import ANIME, ENGLISH, Instance, Service, Settings
+from .namespace import decode_id, is_anime_id, strip_prefix
 from .upstream import Upstream
 
 logger = logging.getLogger(__name__)
 
 CACHE_TTL_SECONDS = 60
 
-# Payload fields whose value is a namespaced ID that already identifies an
-# instance on its own.
-ADD_ID_HINTS = ("qualityProfileId", "languageProfileId", "rootFolderId", "id")
-
 
 class Router:
-    def __init__(self, settings: Settings, upstream: Upstream):
+    def __init__(self, settings: Settings, service: Service, upstream: Upstream):
         self.settings = settings
+        self.service = service
+        self.kind = service.kind
         self.upstream = upstream
         self._cache: dict[str, tuple[float, Any]] = {}
 
@@ -59,22 +57,23 @@ class Router:
             return ENGLISH, "no payload"
 
         offset = self.settings.id_offset
-        for field in ADD_ID_HINTS:
+        for field in self.kind.add_id_hints:
             if field in payload and is_anime_id(payload.get(field), offset):
                 return ANIME, f"{field} is in the anime ID range"
 
         raw_path = strip_prefix(payload.get("rootFolderPath", ""), self.settings.anime_label_prefix)
         path = str(raw_path or "").rstrip("/").lower()
         if path:
-            anime_paths = self.root_folder_paths(self.settings.anime)
-            english_paths = self.root_folder_paths(self.settings.english)
+            anime_paths = self.root_folder_paths(self.service.anime)
+            english_paths = self.root_folder_paths(self.service.english)
             if path in anime_paths and path not in english_paths:
                 return ANIME, f"root folder {raw_path} exists only on the anime instance"
             if path in english_paths and path not in anime_paths:
                 return ENGLISH, f"root folder {raw_path} exists only on the english instance"
 
-        if str(payload.get("seriesType", "")).lower() == "anime":
-            return ANIME, "seriesType is anime"
+        hint_field = self.kind.type_hint_field
+        if hint_field and str(payload.get(hint_field, "")).lower() == "anime":
+            return ANIME, f"{hint_field} is anime"
 
         match = self.settings.anime_path_match
         if match and match in path:
@@ -84,7 +83,7 @@ class Router:
 
     def instance_for_id(self, value: Any) -> tuple[Instance, Any]:
         key, real_id = decode_id(value, self.settings.id_offset)
-        return self.settings.instance_for(key), real_id
+        return self.service.instance_for(key), real_id
 
     def offset_for(self, instance: Instance) -> int:
         return self.settings.id_offset if instance.key == ANIME else 0
@@ -110,12 +109,10 @@ class Router:
             if key == target.key:
                 resolved.append(real_id)
                 continue
-            source = self.settings.instance_for(key)
+            source = self.service.instance_for(key)
             label = self._tag_label(source, real_id)
             if label is None:
-                logger.warning(
-                    "Dropping tag %s: no label found on %s Sonarr", tag, source.label
-                )
+                logger.warning("Dropping tag %s: no label found on %s", tag, source.label)
                 continue
             mapped = self._tag_id_for_label(target, label, headers)
             if mapped is not None:
@@ -147,6 +144,6 @@ class Router:
             self._cache.pop(f"tags:{instance.key}", None)
             return payload.get("id")
         logger.warning(
-            "Could not create tag '%s' on %s Sonarr (HTTP %s)", label, instance.label, status
+            "Could not create tag on %s (HTTP %s)", instance.label, status
         )
         return None

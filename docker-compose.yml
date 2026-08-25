@@ -5,16 +5,28 @@ services:
     build: .
     container_name: proxyseerr
     ports:
-      - "5000:5000"
+      - "5000:5000"   # Sonarr side  - point Seerr's Sonarr server here
+      - "5001:5001"   # Radarr side  - point Seerr's Radarr server here
     environment:
-      PROXY_PORT: "5000"
-      ENGLISH_SONARR_URL: "http://192.168.1.10:8989"
-      ENGLISH_SONARR_API_KEY: "your_english_sonarr_api_key_here"
-      ANIME_SONARR_URL: "http://192.168.1.10:8987"
-      ANIME_SONARR_API_KEY: "your_anime_sonarr_api_key_here"
-      # Optional: require this key from Seerr instead of accepting any caller.
-      # PROXY_API_KEY: "pick_something_long"
-      # Optional tuning.
+      # Required. Generate with: openssl rand -hex 24
+      # Enter the same value as the API key on both servers in Seerr.
+      PROXY_API_KEY: "${PROXY_API_KEY:?set PROXY_API_KEY in .env}"
+
+      # --- Sonarr pair (omit all four to run Radarr only) ---
+      ENGLISH_SONARR_URL: "${ENGLISH_SONARR_URL}"
+      ENGLISH_SONARR_API_KEY: "${ENGLISH_SONARR_API_KEY}"
+      ANIME_SONARR_URL: "${ANIME_SONARR_URL}"
+      ANIME_SONARR_API_KEY: "${ANIME_SONARR_API_KEY}"
+
+      # --- Radarr pair (omit all four to run Sonarr only) ---
+      ENGLISH_RADARR_URL: "${ENGLISH_RADARR_URL}"
+      ENGLISH_RADARR_API_KEY: "${ENGLISH_RADARR_API_KEY}"
+      ANIME_RADARR_URL: "${ANIME_RADARR_URL}"
+      ANIME_RADARR_API_KEY: "${ANIME_RADARR_API_KEY}"
+
+      # --- Optional tuning ---
+      # SONARR_PROXY_PORT: "5000"
+      # RADARR_PROXY_PORT: "5001"
       # ANIME_ID_OFFSET: "1000000000"
       # ANIME_ROOT_FOLDER_MATCH: "anime"
       # ANIME_LABEL_PREFIX: "[Anime] "

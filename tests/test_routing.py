@@ -64,21 +64,21 @@ def test_trailing_slash_and_case_do_not_break_matching(service, folders):
 
 
 @responses.activate
-def test_translate_tags_recreates_foreign_label_on_target(app, service, settings):
+def test_translate_tags_recreates_foreign_label_on_target(app, service, sonarr_config):
     responses.add(responses.GET, f"{ENG_URL}/api/v3/tag", json=[{"id": 3, "label": "seerr-user"}])
     responses.add(responses.GET, f"{ANI_URL}/api/v3/tag", json=[{"id": 9, "label": "other"}])
     responses.add(responses.POST, f"{ANI_URL}/api/v3/tag", json={"id": 11, "label": "seerr-user"})
 
     with app.test_request_context("/api/v3/series", method="POST"):
-        resolved = service.router.translate_tags([3], settings.anime, {})
+        resolved = service.router.translate_tags([3], sonarr_config.anime, {})
     assert resolved == [11]
 
 
 @responses.activate
-def test_translate_tags_reuses_existing_label(app, service, settings):
+def test_translate_tags_reuses_existing_label(app, service, sonarr_config):
     responses.add(responses.GET, f"{ENG_URL}/api/v3/tag", json=[{"id": 3, "label": "seerr-user"}])
     responses.add(responses.GET, f"{ANI_URL}/api/v3/tag", json=[{"id": 9, "label": "seerr-user"}])
 
     with app.test_request_context("/api/v3/series", method="POST"):
-        resolved = service.router.translate_tags([3, OFFSET + 9], settings.anime, {})
+        resolved = service.router.translate_tags([3, OFFSET + 9], sonarr_config.anime, {})
     assert resolved == [9, 9]

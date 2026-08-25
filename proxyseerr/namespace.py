@@ -1,28 +1,19 @@
 """Translation between the proxy's merged ID space and each instance's own IDs.
 
-Sonarr hands out per-instance auto-increment IDs, so English series 42 and
-Anime series 42 both exist. Seerr only ever talks to one "server", so every ID
-the proxy hands back for the anime instance is shifted by ``id_offset``. Any ID
-Seerr sends back is decoded to ``(instance_key, real_id)``, which is both the
+Sonarr and Radarr hand out per-instance auto-increment IDs, so English series 42
+and Anime series 42 both exist. Seerr only ever talks to one "server", so every
+ID the proxy hands back for the anime instance is shifted by ``id_offset``. Any
+ID Seerr sends back is decoded to ``(instance_key, real_id)``, which is both the
 routing decision and the value forwarded upstream.
 """
 from __future__ import annotations
 
 from typing import Any, Iterable
 
-ENGLISH = "english"
-ANIME = "anime"
+from .config import ANIME, ENGLISH
+from .kinds import MediaKind
 
-# Fields that hold an ID belonging to the same instance as the object itself.
-SERIES_ID_FIELDS = ("id", "qualityProfileId", "languageProfileId")
-EPISODE_ID_FIELDS = ("id", "seriesId", "episodeFileId")
-EPISODE_FILE_ID_FIELDS = ("id", "seriesId")
-QUEUE_ID_FIELDS = ("id", "seriesId", "episodeId")
-COMMAND_ID_FIELDS = ("id", "seriesId", "episodeFileId")
 PLAIN_ID_FIELDS = ("id",)
-
-SERIES_LIST_FIELDS = ("tags",)
-COMMAND_LIST_FIELDS = ("seriesIds", "episodeIds", "episodeFileIds")
 
 
 def encode_id(value: Any, offset: int) -> Any:
@@ -71,12 +62,13 @@ def decode_obj(obj: Any, offset: int, fields=PLAIN_ID_FIELDS, list_fields=()) ->
     return _shift(obj, fields, list_fields, lambda v: decode_id(v, offset)[1])
 
 
-def encode_series(series: Any, offset: int) -> Any:
-    return encode_obj(series, offset, SERIES_ID_FIELDS, SERIES_LIST_FIELDS)
+def encode_item(item: Any, kind: MediaKind, offset: int) -> Any:
+    """Namespace a series or movie object."""
+    return encode_obj(item, offset, kind.item_id_fields, kind.item_list_fields)
 
 
-def decode_series(series: Any, offset: int) -> Any:
-    return decode_obj(series, offset, SERIES_ID_FIELDS, SERIES_LIST_FIELDS)
+def decode_item(item: Any, kind: MediaKind, offset: int) -> Any:
+    return decode_obj(item, offset, kind.item_id_fields, kind.item_list_fields)
 
 
 def encode_list(items: Any, offset: int, fields=PLAIN_ID_FIELDS, list_fields=()) -> Any:

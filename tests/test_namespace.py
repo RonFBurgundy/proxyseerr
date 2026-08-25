@@ -1,4 +1,5 @@
 from proxyseerr import namespace as ns
+from proxyseerr.kinds import SONARR
 
 OFFSET = 1_000_000
 
@@ -26,7 +27,7 @@ def test_encode_series_shifts_only_internal_ids():
         "tags": [1, 3],
         "title": "One Piece",
     }
-    encoded = ns.encode_series(series, OFFSET)
+    encoded = ns.encode_item(series, SONARR, OFFSET)
     assert encoded["id"] == 1_000_007
     assert encoded["qualityProfileId"] == 1_000_004
     assert encoded["languageProfileId"] == 1_000_002
@@ -39,7 +40,7 @@ def test_encode_series_shifts_only_internal_ids():
 
 def test_decode_series_is_inverse_of_encode():
     series = {"id": 7, "qualityProfileId": 4, "tags": [1]}
-    assert ns.decode_series(ns.encode_series(series, OFFSET), OFFSET) == series
+    assert ns.decode_item(ns.encode_item(series, SONARR, OFFSET), SONARR, OFFSET) == series
 
 
 def test_prefix_labels_only_touches_name():

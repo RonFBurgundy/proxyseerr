@@ -9,3 +9,6 @@ __pycache__
 README.md
 docker-compose.yml
 requirements-dev.txt
+docker-compose.override.yml
+.env
+*.env

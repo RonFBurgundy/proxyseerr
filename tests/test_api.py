@@ -3,8 +3,7 @@ import json
 import responses
 from requests.exceptions import ConnectionError as UpstreamDown
 
-from conftest import ANI_URL, ENG_URL, OFFSET, make_settings
-from proxyseerr.app import create_app
+from conftest import ANI_URL, ENG_URL, OFFSET, build_client, make_settings
 
 ENG_FOLDERS = [{"id": 1, "path": "/data/media/tv"}]
 ANI_FOLDERS = [{"id": 1, "path": "/data/media/anime"}]
@@ -238,7 +237,9 @@ def test_upstream_failure_returns_502(client):
     responses.add(responses.GET, f"{ENG_URL}/api/v3/system/status", body=UpstreamDown("nope"))
     response = client.get("/api/v3/system/status")
     assert response.status_code == 502
-    assert response.get_json()["error"] == "Upstream connection failed"
+    assert response.get_json()["error"] == "ENGLISH Sonarr did not respond"
+    # The internal URL must not be echoed to the caller.
+    assert ENG_URL not in response.get_data(as_text=True)
 
 
 @responses.activate
@@ -269,8 +270,12 @@ def test_inline_apikey_param_is_swapped(client):
 
 
 def test_proxy_api_key_is_enforced_when_set():
-    app = create_app(make_settings(proxy_api_key="LETMEIN"))
-    client = app.test_client()
+    from conftest import SONARR_SERVICE
+
+    _, client = build_client(
+        make_settings(proxy_api_key="LETMEIN-0123456789", allow_anonymous=False),
+        SONARR_SERVICE,
+    )
     assert client.get("/api/v3/series").status_code == 401
     assert client.get("/proxy/health").status_code in (200, 503)
 
