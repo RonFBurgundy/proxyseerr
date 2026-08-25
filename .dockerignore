@@ -1,0 +1,11 @@
+.git
+.github
+tests
+unraid
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+README.md
+docker-compose.yml
+requirements-dev.txt

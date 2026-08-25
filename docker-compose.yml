@@ -1,0 +1,22 @@
+services:
+  proxyseerr:
+    image: ghcr.io/ronfburgundy/proxyseerr:latest
+    # To build locally instead of pulling: docker compose up --build
+    build: .
+    container_name: proxyseerr
+    ports:
+      - "5000:5000"
+    environment:
+      PROXY_PORT: "5000"
+      ENGLISH_SONARR_URL: "http://192.168.1.10:8989"
+      ENGLISH_SONARR_API_KEY: "your_english_sonarr_api_key_here"
+      ANIME_SONARR_URL: "http://192.168.1.10:8987"
+      ANIME_SONARR_API_KEY: "your_anime_sonarr_api_key_here"
+      # Optional: require this key from Seerr instead of accepting any caller.
+      # PROXY_API_KEY: "pick_something_long"
+      # Optional tuning.
+      # ANIME_ID_OFFSET: "1000000000"
+      # ANIME_ROOT_FOLDER_MATCH: "anime"
+      # ANIME_LABEL_PREFIX: "[Anime] "
+      # LOG_LEVEL: "INFO"
+    restart: unless-stopped
