@@ -118,10 +118,21 @@ def create_app(settings: Settings, service_config: Service) -> Flask:
     router = service.router
     app.extensions["proxyseerr"] = service
 
+    def supplied_key() -> str:
+        header = request.headers.get("X-Api-Key")
+        if header:
+            return header
+        # Sonarr and Radarr bind query parameters case-insensitively, so a
+        # client may legitimately send apiKey rather than apikey.
+        for name, value in request.args.items():
+            if name.lower() == "apikey":
+                return value
+        return ""
+
     def authenticated() -> bool:
         if not settings.proxy_api_key:
             return settings.allow_anonymous
-        supplied = request.headers.get("X-Api-Key") or request.args.get("apikey") or ""
+        supplied = supplied_key()
         # compare_digest raises TypeError on non-ASCII str, which a caller can
         # trigger at will; comparing bytes keeps it constant-time and total.
         return hmac.compare_digest(
@@ -314,8 +325,14 @@ def create_app(settings: Settings, service_config: Service) -> Flask:
     def create_tag():
         # Created on the default instance only; the anime side gets the same
         # label on demand when a request that carries the tag is routed there.
-        router.invalidate()
-        return service.forward(service_config.english, "/api/v3/tag")
+        result = service.forward(service_config.english, "/api/v3/tag")
+        status = result[1] if isinstance(result, tuple) else result.status_code
+        if status < 400:
+            # Only after the tag exists: clearing first lets a concurrent read
+            # refill the cache from before the create, and a tag missing from
+            # that cache is silently dropped from the next request using it.
+            router.invalidate()
+        return result
 
     # -- queue -------------------------------------------------------------
     @app.get("/api/v3/queue")

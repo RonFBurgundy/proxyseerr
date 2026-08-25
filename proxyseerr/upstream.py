@@ -7,6 +7,7 @@ from typing import Any
 
 import requests
 from flask import Response
+from requests.cookies import RequestsCookieJar
 
 from .config import Instance
 
@@ -122,6 +123,22 @@ def clean_params(params: dict[str, Any], instance: Instance) -> dict[str, Any]:
     return out
 
 
+class _NoCookieJar(RequestsCookieJar):
+    """A jar that never stores or replays a cookie.
+
+    One session serves both instances, and a cookie's domain ignores the port -
+    so with the usual layout of two instances on one host, a cookie set by one
+    would be sent to the other. Nothing here needs cookies: every request
+    authenticates with X-Api-Key.
+    """
+
+    def set_cookie(self, *args, **kwargs) -> None:
+        return None
+
+    def extract_cookies(self, *args, **kwargs) -> None:
+        return None
+
+
 class Upstream:
     def __init__(
         self,
@@ -138,6 +155,7 @@ class Upstream:
         # rather than only as an eventual timeout.
         self.slow_after = slow_after if slow_after is not None else max(1.0, timeout / 2)
         self.session = requests.Session()
+        self.session.cookies = _NoCookieJar()
         # waitress serves 16 threads per port; the default pool of 10 would
         # discard and rebuild connections under a burst of merged reads.
         adapter = requests.adapters.HTTPAdapter(

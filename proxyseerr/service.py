@@ -224,7 +224,11 @@ class ProxyService:
         english = self._expect_list(english_raw, self.service.english, path)
         anime = self._expect_list(anime_raw, self.service.anime, path)
 
-        seen = {item.get(external_id) for item in english if isinstance(item, dict)}
+        seen = {
+            item.get(external_id)
+            for item in english
+            if isinstance(item, dict) and item.get(external_id)
+        }
         merged = list(english)
         for item in anime:
             if isinstance(item, dict) and item.get(external_id) in seen:
@@ -247,7 +251,11 @@ class ProxyService:
         if isinstance(english, dict) or isinstance(anime, dict):
             if isinstance(anime, dict) and anime.get("id"):
                 return jsonify(ns.encode_item(anime, self.kind, offset))
-            return jsonify(english if english is not None else anime)
+            if english is not None:
+                return jsonify(english)
+            # Falling back to the anime copy: it still has to be namespaced,
+            # or its IDs would be read as the English instance's.
+            return jsonify(ns.encode_item(anime, self.kind, offset))
 
         merged = list(english) if isinstance(english, list) else []
         anime_items = anime if isinstance(anime, list) else []
