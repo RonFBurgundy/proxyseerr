@@ -1,9 +1,14 @@
 # proxyseerr
 
-A small API routing proxy that lets **Seerr** (or Overseerr / Jellyseerr) drive **two Sonarr
-instances and two Radarr instances** through a single server connection each — typically a standard
+A small API routing proxy that lets **Seerr** drive **two Sonarr instances and two Radarr
+instances** through a single server connection each — typically a standard
 English library and a dedicated Anime library configured per the
 [TRaSH Guides](https://trash-guides.info/).
+
+> **Compatibility.** Built and verified against [Seerr](https://github.com/seerr-team/seerr)'s
+> current Sonarr/Radarr API client, talking to Sonarr and Radarr **v4**. Overseerr and Jellyseerr
+> use closely related clients and may well work, but they are untested — if you try one, an issue
+> saying what happened is welcome.
 
 ## The problem
 

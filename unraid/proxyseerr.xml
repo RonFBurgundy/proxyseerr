@@ -10,7 +10,7 @@
   <Support>https://github.com/RonFBurgundy/proxyseerr/issues</Support>
   <Project>https://github.com/RonFBurgundy/proxyseerr</Project>
   <Overview>
-    A lightweight API routing proxy that lets Seerr (or Overseerr/Jellyseerr) drive two Sonarr
+    A lightweight API routing proxy that lets Seerr drive two Sonarr
     instances and two Radarr instances through a single server connection each - typically a
     standard English library and a dedicated Anime library set up per the TRaSH Guides.
 
@@ -27,6 +27,8 @@
 
     The proxy carries admin API keys for your servers, so it requires an API key of its own -
     generate one with `openssl rand -hex 24` and enter the same value in Seerr.
+
+    Built and verified against Seerr and Sonarr/Radarr v4. Overseerr and Jellyseerr are untested.
   </Overview>
   <Category>MediaApp:Video MediaServer:Video Tools:Utilities</Category>
   <WebUI>http://[IP]:[PORT:5000]/proxy/health</WebUI>
