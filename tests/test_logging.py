@@ -222,3 +222,31 @@ def test_connect_timeout_is_separate_and_bounded_by_the_read_timeout():
     assert Upstream(timeout=20).connect_timeout == 5
     assert Upstream(timeout=3).connect_timeout == 3  # never exceeds the read budget
     assert Upstream(timeout=20).slow_after == 10
+
+
+@responses.activate
+def test_periodic_broadcasts_do_not_spam_the_log(client, caplog):
+    """Seerr polls RefreshMonitoredDownloads every minute; INFO would drown."""
+    import logging as _logging
+
+    responses.add(responses.POST, f"{ENG_URL}/api/v3/command", json={"id": 1})
+    responses.add(responses.POST, f"{ANI_URL}/api/v3/command", json={"id": 2})
+
+    caplog.set_level(_logging.INFO, logger="proxyseerr")
+    client.post("/api/v3/command", json={"name": "RefreshMonitoredDownloads"})
+    assert "Broadcasting" not in caplog.text
+
+    caplog.clear()
+    caplog.set_level(_logging.DEBUG, logger="proxyseerr")
+    client.post("/api/v3/command", json={"name": "RefreshMonitoredDownloads"})
+    assert "Broadcasting command 'RefreshMonitoredDownloads'" in caplog.text
+
+
+@responses.activate
+def test_routed_commands_are_still_logged_at_info(client, caplog):
+    import logging as _logging
+
+    responses.add(responses.POST, f"{ANI_URL}/api/v3/command", json={"id": 3})
+    caplog.set_level(_logging.INFO, logger="proxyseerr")
+    client.post("/api/v3/command", json={"name": "MissingEpisodeSearch", "seriesId": OFFSET + 17})
+    assert "Routing command 'MissingEpisodeSearch' to ANIME Sonarr" in caplog.text

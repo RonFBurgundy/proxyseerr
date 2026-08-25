@@ -331,7 +331,11 @@ def create_app(settings: Settings, service_config: Service) -> Flask:
 
         name = payload.get("name", "unknown") if isinstance(payload, dict) else "unknown"
         if not has_target:
-            logger.info("Broadcasting command '%s' to both %s instances", name, kind.name)
+            # Seerr polls RefreshMonitoredDownloads every minute, so this would
+            # be a line a minute forever, burying the decisions worth reading.
+            # A broadcast records no routing choice anyway - it goes to both -
+            # and a failed one is still logged as a warning by broadcast_command.
+            logger.debug("Broadcasting command '%s' to both %s instances", name, kind.name)
             return broadcast_command(payload)
 
         instance = service_config.instance_for(target)
