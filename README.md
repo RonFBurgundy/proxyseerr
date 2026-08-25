@@ -228,8 +228,8 @@ first failed request:
 
 ```
 [INFO ] Authentication: API key required | request log: errors | anime ID offset: 1000000000
-[INFO ] ENGLISH Sonarr -> http://10.0.0.5:8989 (v4.0.15.2941)
-[WARNING] ANIME Sonarr -> http://10.0.0.5:8987 is NOT responding. Requests routed there
+[INFO ] ENGLISH Sonarr -> http://sonarr.example.lan:8989 (v4.0.15.2941)
+[WARNING] ANIME Sonarr -> http://sonarr-anime.example.lan:8987 is NOT responding. Requests routed there
           will fail and merged reads will be missing its titles until it returns.
 [INFO ] sonarr proxy listening on 0.0.0.0:5000 (anime ID offset 1000000000)
 ```
