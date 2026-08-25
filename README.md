@@ -105,7 +105,7 @@ Pin the version instead of tracking releases by changing the Repository field to
 
 **The container needs no volumes.** It holds no state: nothing to map, nothing to back up.
 Every URL you enter must be reachable *from inside the container*, so on the default bridge
-network use the host's LAN IP (`http://192.168.1.x:8989`), never `localhost`.
+network use the host's own LAN IP and each instance's port, never `localhost`.
 
 ### Docker Compose
 
