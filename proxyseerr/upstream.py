@@ -73,19 +73,27 @@ class AllInstancesFailed(RuntimeError):
     makes Seerr keep what it already knows.
     """
 
-    def __init__(self, path: str, status: int | None = None):
+    def __init__(self, path: str, status: int | None = None, missing: str | None = None):
         # A status both instances agree on is their answer, not an outage:
         # Sonarr v4 has no /languageprofile, so both legitimately 404.
         self.status_code = status if status and 400 <= status < 500 else 502
-        self.public_message = (
-            f"Both instances returned HTTP {status}"
-            if self.status_code != 502
-            else "No instance could be reached"
-        )
-        self.log_message = (
-            f"Every instance failed for {redact(path)}; "
-            f"returning {self.status_code}"
-        )
+        if missing:
+            self.public_message = f"{missing} could not be reached"
+            self.log_message = (
+                f"Refusing to answer {redact(path)} without {missing}'s data; "
+                f"returning {self.status_code}"
+            )
+        elif self.status_code != 502:
+            self.public_message = f"Both instances returned HTTP {status}"
+            self.log_message = (
+                f"Both instances rejected {redact(path)} with HTTP {status}; "
+                f"passing it through"
+            )
+        else:
+            self.public_message = "No instance could be reached"
+            self.log_message = (
+                f"Every instance failed for {redact(path)}; returning {self.status_code}"
+            )
         super().__init__(self.log_message)
 
 

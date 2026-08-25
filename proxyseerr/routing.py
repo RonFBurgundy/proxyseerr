@@ -24,25 +24,44 @@ class Router:
 
     # -- upstream lookups -------------------------------------------------
     def _cached(self, key: str, loader):
+        """Memoise ``loader``, which returns ``(value, cacheable)``.
+
+        A failed lookup is never cached. Caching one would keep a wrong answer
+        for the whole TTL - and after a reboot, where the proxy can easily be
+        up before Sonarr is, that wrong answer is an empty root folder set,
+        which silently sends everything to the default instance.
+        """
         now = time.monotonic()
         hit = self._cache.get(key)
         if hit and now - hit[0] < CACHE_TTL_SECONDS:
             return hit[1]
-        value = loader()
-        self._cache[key] = (now, value)
+        value, cacheable = loader()
+        if cacheable:
+            self._cache[key] = (now, value)
         return value
 
     def invalidate(self) -> None:
         self._cache.clear()
 
-    def root_folder_paths(self, instance: Instance) -> set[str]:
-        def load() -> set[str]:
-            folders = self.upstream.json_or_empty(instance, "/api/v3/rootfolder")
+    def root_folder_paths(self, instance: Instance) -> set[str] | None:
+        """Root folders on ``instance``, or ``None`` if they could not be read.
+
+        The distinction matters: an unreadable instance is not an instance with
+        no root folders, and treating it as one turns "I cannot see the anime
+        server" into "this path belongs to the English server".
+        """
+
+        def load() -> tuple[set[str] | None, bool]:
+            folders, ok, _status = self.upstream.fetch(
+                instance, "/api/v3/rootfolder", headers=instance.auth_headers
+            )
+            if not ok or not isinstance(folders, list):
+                return None, False
             return {
                 str(f.get("path", "")).rstrip("/").lower()
                 for f in folders
                 if isinstance(f, dict) and f.get("path")
-            }
+            }, True
 
         return self._cached(f"rootfolders:{instance.key}", load)
 
@@ -66,10 +85,26 @@ class Router:
         if path:
             anime_paths = self.root_folder_paths(self.service.anime)
             english_paths = self.root_folder_paths(self.service.english)
-            if path in anime_paths and path not in english_paths:
-                return ANIME, f"root folder {raw_path} exists only on the anime instance"
-            if path in english_paths and path not in anime_paths:
-                return ENGLISH, f"root folder {raw_path} exists only on the english instance"
+            if anime_paths is None or english_paths is None:
+                # One side is unreadable, so ownership proves nothing: a path
+                # "only on the English instance" may simply be one the anime
+                # instance could not be asked about. Fall through to the
+                # weaker rules rather than route on a false certainty.
+                unreadable = (
+                    self.service.anime if anime_paths is None else self.service.english
+                )
+                logger.warning(
+                    "Cannot read root folders from %s, so root-folder routing is "
+                    "unavailable for this request; falling back to seriesType and "
+                    "the '%s' keyword",
+                    unreadable.label,
+                    self.settings.anime_path_match,
+                )
+            else:
+                if path in anime_paths and path not in english_paths:
+                    return ANIME, f"root folder {raw_path} exists only on the anime instance"
+                if path in english_paths and path not in anime_paths:
+                    return ENGLISH, f"root folder {raw_path} exists only on the english instance"
 
         hint_field = self.kind.type_hint_field
         if hint_field and str(payload.get(hint_field, "")).lower() == "anime":
@@ -120,10 +155,15 @@ class Router:
         return resolved
 
     def _tags(self, instance: Instance) -> list[dict]:
-        return self._cached(
-            f"tags:{instance.key}",
-            lambda: self.upstream.json_or_empty(instance, "/api/v3/tag"),
-        )
+        def load() -> tuple[list[dict], bool]:
+            tags, ok, _status = self.upstream.fetch(
+                instance, "/api/v3/tag", headers=instance.auth_headers
+            )
+            if not ok or not isinstance(tags, list):
+                return [], False
+            return tags, True
+
+        return self._cached(f"tags:{instance.key}", load)
 
     def _tag_label(self, instance: Instance, tag_id: int) -> str | None:
         for tag in self._tags(instance):

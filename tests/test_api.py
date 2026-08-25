@@ -30,14 +30,16 @@ def test_merged_series_namespaces_only_the_anime_side(client):
 
 
 @responses.activate
-def test_unreachable_instance_does_not_blank_the_library(client):
+def test_unreachable_instance_never_yields_a_partial_library(client):
+    """Half a library reads as "everything on the other instance is gone"."""
     responses.add(
         responses.GET, f"{ENG_URL}/api/v3/series", json=[{"id": 5, "tvdbId": 111}]
     )
     responses.add(responses.GET, f"{ANI_URL}/api/v3/series", body=UpstreamDown("down"))
 
-    body = client.get("/api/v3/series").get_json()
-    assert [s["id"] for s in body] == [5]
+    response = client.get("/api/v3/series")
+    assert response.status_code == 502
+    assert response.get_json() == {"error": "ANIME Sonarr could not be reached"}
 
 
 @responses.activate

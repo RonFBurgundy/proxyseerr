@@ -185,12 +185,17 @@ class ProxyService:
             )
         return []
 
-    def _fetch_both(self, path: str) -> tuple[Any, Any]:
+    def _fetch_both(self, path: str, *, require_both: bool = False) -> tuple[Any, Any]:
         """Read ``path`` from both instances.
 
         Returns each payload, or ``None`` for an instance that did not answer.
         If neither answered the caller gets an error rather than a merged empty
         result, so a total outage can never look like an empty library.
+
+        With ``require_both``, one failure is enough to raise. Use it where a
+        partial answer would be read as fact - the library list is the whole
+        truth about what exists, and half of it tells Seerr that everything on
+        the missing instance is gone.
         """
         english, english_ok, english_status = self.upstream.fetch(
             self.service.english,
@@ -210,6 +215,14 @@ class ProxyService:
             raise AllInstancesFailed(path, agreed)
         if not english_ok or not anime_ok:
             missing = self.service.english if not english_ok else self.service.anime
+            if require_both:
+                logger.error(
+                    "%s is unreachable and %s must be complete: a partial library "
+                    "would tell Seerr that everything on that instance is gone",
+                    missing.label,
+                    redact(path),
+                )
+                raise AllInstancesFailed(path, missing=missing.label)
             logger.warning(
                 "Answering %s without %s's data; the result is incomplete",
                 redact(path),
@@ -220,7 +233,7 @@ class ProxyService:
     def merged_items(self) -> Response:
         path = self.kind.collection_path
         external_id = self.kind.external_id
-        english_raw, anime_raw = self._fetch_both(path)
+        english_raw, anime_raw = self._fetch_both(path, require_both=True)
         english = self._expect_list(english_raw, self.service.english, path)
         anime = self._expect_list(anime_raw, self.service.anime, path)
 
@@ -336,7 +349,7 @@ class ProxyService:
             payload = self.upstream.json_or_empty(
                 instance,
                 "/api/v3/system/status",
-                headers={"X-Api-Key": instance.api_key},
+                headers=instance.auth_headers,
                 default={},
             )
             reachable = bool(isinstance(payload, dict) and payload.get("version"))

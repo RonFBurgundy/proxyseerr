@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  schedule:
+    # Weekly rebuild of the newest release, so security fixes to the base
+    # image reach people who are not waiting for a new version of this code.
+    - cron: "17 4 * * 1"
   workflow_dispatch:
 
 env:
@@ -14,10 +18,30 @@ permissions:
   contents: read
 
 jobs:
+  target:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.pick.outputs.ref }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            ref=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+          else
+            ref="${{ github.ref }}"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Building $ref"
+
   test:
+    needs: target
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.target.outputs.ref }}
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -26,13 +50,15 @@ jobs:
       - run: python -m pytest -q
 
   publish:
-    needs: test
+    needs: [target, test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.target.outputs.ref }}
 
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
@@ -52,11 +78,13 @@ jobs:
           # hand someone an untagged development build.
           flavor: |
             latest=false
+          # A scheduled run rebuilds the newest release and moves only "latest".
+          # Version tags stay immutable: 0.1.4 must always be the same image.
           tags: |
-            type=ref,event=branch
+            type=ref,event=branch,enable=${{ github.event_name != 'schedule' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule' }}
 
       - uses: docker/build-push-action@v7
         with:

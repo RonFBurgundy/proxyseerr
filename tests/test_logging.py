@@ -187,15 +187,24 @@ def test_total_outage_is_an_error_not_an_empty_library(client, loud):
 
 
 @responses.activate
-def test_partial_outage_returns_data_and_says_it_is_incomplete(client, loud):
+def test_partial_outage_fails_the_library_but_not_the_dropdowns(client, loud):
+    """Deliberate asymmetry: the library must be whole, dropdowns need not be.
+
+    A half library tells Seerr that titles are gone; a half dropdown just
+    limits what you can pick while an instance is down.
+    """
     responses.add(responses.GET, f"{ENG_URL}/api/v3/series", json=[{"id": 1, "tvdbId": 9}])
     responses.add(responses.GET, f"{ANI_URL}/api/v3/series", body=Down("refused"))
+    assert client.get("/api/v3/series").status_code == 502
+    assert "must be complete" in loud.text
 
-    response = client.get("/api/v3/series")
+    loud.clear()
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/rootfolder", json=[{"id": 1, "path": "/tv"}])
+    responses.add(responses.GET, f"{ANI_URL}/api/v3/rootfolder", body=Down("refused"))
+    response = client.get("/api/v3/rootfolder")
     assert response.status_code == 200
-    assert [s["id"] for s in response.get_json()] == [1]
+    assert [f["id"] for f in response.get_json()] == [1]
     assert "the result is incomplete" in loud.text
-    assert "ANIME Sonarr" in loud.text
 
 
 @responses.activate

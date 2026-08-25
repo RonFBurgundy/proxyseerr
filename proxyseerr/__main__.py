@@ -26,12 +26,21 @@ def probe_instances(settings: Settings) -> None:
             payload = upstream.json_or_empty(
                 instance,
                 "/api/v3/system/status",
-                headers={"X-Api-Key": instance.api_key},
+                headers=instance.auth_headers,
                 default={},
             )
             version = payload.get("version") if isinstance(payload, dict) else None
             if version:
-                logger.info("%s -> %s (v%s)", instance.label, instance.url, version)
+                # The instance name is logged so that swapping the two URLs, or
+                # restoring one from the wrong backup, is visible here rather
+                # than as mysteriously misrouted titles later.
+                logger.info(
+                    "%s -> %s (%s, v%s)",
+                    instance.label,
+                    instance.url,
+                    payload.get("instanceName") or "unnamed",
+                    version,
+                )
             else:
                 logger.warning(
                     "%s -> %s is NOT responding. Requests routed there will fail and "

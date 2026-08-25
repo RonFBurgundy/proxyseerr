@@ -70,6 +70,15 @@ class Instance:
     def configured(self) -> bool:
         return bool(self.url and self.api_key)
 
+    @property
+    def auth_headers(self) -> dict[str, str]:
+        """Headers for a call the proxy makes on its own behalf.
+
+        Internal lookups have no inbound request to copy headers from, and
+        every /api/v3 endpoint rejects a request without this key.
+        """
+        return {"X-Api-Key": self.api_key}
+
     def endpoint(self, path: str) -> str:
         return f"{self.url}/{path.lstrip('/')}"
 

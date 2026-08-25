@@ -205,6 +205,48 @@ plan to re-import them on the anime side), delete the request in Seerr, then req
 Every decision is logged with its reason, so a misrouted title can be diagnosed from the container
 log alone.
 
+## Operations
+
+**The proxy holds no state.** No volumes, no database, nothing to back up or
+corrupt. Its only memory is a 60-second cache of root folders and tags. A restart —
+clean, unclean, or a full host reboot — loses nothing, and the ID mapping is a pure
+function of `ANIME_ID_OFFSET`, so the IDs stored in Seerr keep meaning the same thing
+across restarts.
+
+**Start order does not matter.** On a reboot everything comes up at once and the proxy
+will usually win the race. It probes each instance at startup and warns about any that
+are not answering, then carries on serving; requests succeed as soon as the instance is
+up. A failed lookup is never cached, so nothing is stuck waiting out a TTL.
+
+**When one instance is down, behaviour is deliberately asymmetric:**
+
+| Request | One instance down | Both down |
+| --- | --- | --- |
+| Library (`/series`, `/movie`) | **502** — a half library tells Seerr that everything on the missing instance is gone | 502 |
+| Root folders, profiles, tags | 200 with what the reachable instance has, logged as incomplete | 502 |
+| An add routed to the *up* instance | works normally | 502 |
+| An add routed to the *down* instance | 502, naming the instance | 502 |
+| Root-folder routing | falls back to the keyword rule, with a warning — "only on the English instance" is not a safe conclusion when the anime instance cannot be asked | as one down |
+
+The one rule to take from that table: the proxy never turns "I cannot see an instance"
+into "that instance does not have it".
+
+**Two things must not change after titles are tracked.** Seerr stores the namespaced IDs
+in its own database, so changing `ANIME_ID_OFFSET`, or swapping which URL is English and
+which is anime, silently repoints every stored ID. The startup log prints each
+instance's name from its own settings so a swap is visible immediately:
+
+```
+[INFO] ENGLISH Sonarr -> http://sonarr.example.lan:8989 (Sonarr, v4.0.19.2979)
+[INFO] ANIME Sonarr   -> http://sonarr-anime.example.lan:8987 (Sonarr Anime, v4.0.19.2979)
+```
+
+**Staying current.** Releases are built from a fresh base image, and the newest release is
+rebuilt weekly so security fixes to Debian and Python reach you without waiting for new
+code. Version tags stay immutable — `0.1.4` is always the same image — so `latest` is the
+tag that receives those rebuilds. Dependabot keeps the Python dependencies and GitHub
+Actions current, and CI gates every release.
+
 ## Troubleshooting
 
 **A title went to the wrong instance.** Every add logs its reasoning — find the
@@ -287,11 +329,7 @@ up, then drop back to `errors`.
 
 ## Behaviour notes
 
-- If one instance is unreachable, merged reads return what the other one gave rather than failing —
-  a temporarily offline anime instance shows as a partial library, not an empty one, and the log
-  says the result is incomplete.
-- If *both* instances are unreachable, merged reads answer **502 rather than an empty list**. An
-  empty library is a lie Seerr would act on; an error makes it keep what it already knows.
+- Partial and total outages are handled differently per endpoint — see **Operations** above.
 - A title present on **both** instances appears twice in the merged library, and a warning naming its
   `tvdbId`/`tmdbId` is logged. Keep each title on one instance.
 - Commands with no title ID (e.g. `RefreshMonitoredDownloads`) are sent to both instances.
