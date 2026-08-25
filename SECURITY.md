@@ -31,6 +31,8 @@ the same care as the servers behind it.
   reachability unless the caller is authenticated.
 - **Credentials are redacted from logs**, including any `apikey=` in a URL that
   appears inside an upstream exception message.
+- **Logs record every rejection**: unauthenticated requests, refused paths and
+  oversized bodies each produce a WARNING naming the method and path.
 - **Request bodies are capped** at `MAX_BODY_BYTES` (8 MB default).
 - **The container runs as a non-root user (uid 1000).**
 

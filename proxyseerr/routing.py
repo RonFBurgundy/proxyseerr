@@ -144,6 +144,9 @@ class Router:
             self._cache.pop(f"tags:{instance.key}", None)
             return payload.get("id")
         logger.warning(
-            "Could not create tag on %s (HTTP %s)", instance.label, status
+            "Could not create tag '%s' on %s (HTTP %s); it will be dropped from this request",
+            label,
+            instance.label,
+            status,
         )
         return None

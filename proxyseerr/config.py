@@ -12,6 +12,7 @@ from .kinds import KINDS, MediaKind
 # default leaves ~1.1B of headroom before an offset ID could overflow upstream.
 DEFAULT_ID_OFFSET = 1_000_000_000
 DEFAULT_MAX_BODY_BYTES = 8 * 1024 * 1024
+REQUEST_LOG_MODES = ("off", "errors", "all")
 
 ENGLISH = "english"
 ANIME = "anime"
@@ -90,6 +91,7 @@ class Settings:
     allow_anonymous: bool
     max_body_bytes: int
     log_level: str
+    request_log: str
 
     def service(self, kind_name: str) -> Service | None:
         for service in self.services:
@@ -188,6 +190,12 @@ def load_settings() -> Settings:
     if proxy_api_key and len(proxy_api_key) < 16:
         raise ConfigError("PROXY_API_KEY must be at least 16 characters.")
 
+    request_log = _env("REQUEST_LOG", "errors").lower()
+    if request_log not in REQUEST_LOG_MODES:
+        raise ConfigError(
+            f"REQUEST_LOG must be one of {', '.join(REQUEST_LOG_MODES)}, got {request_log!r}"
+        )
+
     return Settings(
         services=services,
         id_offset=_int_env("ANIME_ID_OFFSET", DEFAULT_ID_OFFSET),
@@ -198,4 +206,5 @@ def load_settings() -> Settings:
         allow_anonymous=allow_anonymous,
         max_body_bytes=_int_env("MAX_BODY_BYTES", DEFAULT_MAX_BODY_BYTES, minimum=1024),
         log_level=_env("LOG_LEVEL", "INFO").upper(),
+        request_log=request_log,
     )

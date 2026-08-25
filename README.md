@@ -129,6 +129,7 @@ Multi-arch (`linux/amd64`, `linux/arm64`), built and published by GitHub Actions
 | `ANIME_LABEL_PREFIX` | `[Anime] ` | Prefix on anime profile names in Seerr's dropdowns. Root folder paths are never decorated. |
 | `UPSTREAM_TIMEOUT` | `20` | Seconds before an upstream call is abandoned. |
 | `MAX_BODY_BYTES` | `8388608` | Largest request body accepted. |
+| `REQUEST_LOG` | `errors` | `errors` logs every failed request, `all` logs every request, `off` disables the access log. |
 | `LOG_LEVEL` | `INFO` | `INFO` logs one line per routing decision. |
 
 ## Seerr setup
@@ -167,10 +168,60 @@ plan to re-import them on the anime side), delete the request in Seerr, then req
 Every decision is logged with its reason, so a misrouted title can be diagnosed from the container
 log alone.
 
+## Logging
+
+The proxy is built so that nothing degrades quietly — every path that drops,
+truncates or rejects something writes a line naming the instance involved.
+
+At startup it reports the auth mode, the ID offset, and probes every configured
+instance, so an unreachable server is visible immediately rather than at the
+first failed request:
+
+```
+[INFO ] Authentication: API key required | request log: errors | anime ID offset: 1000000000
+[INFO ] ENGLISH Sonarr -> http://10.0.0.5:8989 (v4.0.15.2941)
+[WARNING] ANIME Sonarr -> http://10.0.0.5:8987 is NOT responding. Requests routed there
+          will fail and merged reads will be missing its titles until it returns.
+[INFO ] sonarr proxy listening on 0.0.0.0:5000 (anime ID offset 1000000000)
+```
+
+While running, these are logged:
+
+| Event | Level |
+| --- | --- |
+| Routing decision for an add or command, with the reason | INFO |
+| **An instance rejecting a forwarded request**, with the status and its own error message | WARNING |
+| An instance unreachable or answering a merge read with an error | WARNING |
+| A merge read getting an unexpected payload shape | WARNING |
+| A tag that could not be created on the target instance and was dropped | WARNING |
+| A title present on both instances | WARNING |
+| A request body that claimed to be JSON but was not | WARNING |
+| A rejected unauthenticated request, refused path, or oversized body | WARNING |
+| Any unhandled error, with traceback | ERROR |
+| Every failed request, one line: `POST /api/v3/series -> 400 via ANIME Sonarr in 42ms` | WARNING |
+| Every *successful* request, same format | only when `REQUEST_LOG=all` |
+
+The one that matters most is the second row. An add rejected by Sonarr — wrong
+quality profile, a root folder that instance does not have — is passed back to
+Seerr with its original status, and it is also recorded here with the upstream's
+own explanation:
+
+```
+[WARNING] ANIME Sonarr rejected POST /api/v3/series with HTTP 400: Invalid quality profile
+[WARNING] POST /api/v3/series -> 400 via ANIME Sonarr in 61ms
+```
+
+API keys are redacted from every log line, including inside upstream exception
+messages that embed the request URL. Set `REQUEST_LOG=all` while setting things
+up, then drop back to `errors`.
+
 ## Behaviour notes
 
 - If one instance is unreachable, merged reads return what the other one gave rather than failing —
-  a temporarily offline anime instance shows as a partial library, not an empty one.
+  a temporarily offline anime instance shows as a partial library, not an empty one, and the log
+  says the result is incomplete.
+- If *both* instances are unreachable, merged reads answer **502 rather than an empty list**. An
+  empty library is a lie Seerr would act on; an error makes it keep what it already knows.
 - A title present on **both** instances appears twice in the merged library, and a warning naming its
   `tvdbId`/`tmdbId` is logged. Keep each title on one instance.
 - Commands with no title ID (e.g. `RefreshMonitoredDownloads`) are sent to both instances.

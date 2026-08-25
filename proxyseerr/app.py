@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import hmac
 import logging
+import time
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
+from werkzeug.exceptions import HTTPException
 
 from . import namespace as ns
 from .config import ANIME, ENGLISH, Service, Settings
 from .service import ProxyService
-from .upstream import UpstreamError, redact
+from .upstream import AllInstancesFailed, UpstreamError, redact
 
 logger = logging.getLogger(__name__)
 
@@ -73,14 +75,42 @@ def create_app(settings: Settings, service_config: Service) -> Flask:
         supplied = request.headers.get("X-Api-Key") or request.args.get("apikey") or ""
         return hmac.compare_digest(supplied, settings.proxy_api_key)
 
+    @app.errorhandler(HTTPException)
+    def handle_http_exception(exc: HTTPException):
+        """Answer in JSON, like the API being proxied."""
+        return jsonify({"error": exc.name}), exc.code
+
+    @app.errorhandler(Exception)
+    def handle_unexpected(exc: Exception):
+        logger.exception(
+            "Unhandled error serving %s %s", request.method, redact(request.path)
+        )
+        return jsonify({"error": "Internal proxy error"}), 500
+
     @app.errorhandler(UpstreamError)
     def handle_upstream_error(exc: UpstreamError):
         logger.error("%s", exc.log_message)
         return jsonify({"error": exc.public_message}), 502
 
+    @app.errorhandler(AllInstancesFailed)
+    def handle_total_failure(exc: AllInstancesFailed):
+        logger.error("%s", exc.log_message)
+        return jsonify({"error": exc.public_message}), 502
+
     @app.errorhandler(413)
     def handle_too_large(_exc):
+        logger.warning(
+            "Rejected oversized body on %s %s (limit %s bytes)",
+            request.method,
+            redact(request.path),
+            settings.max_body_bytes,
+        )
         return jsonify({"error": "Request body too large"}), 413
+
+    @app.before_request
+    def begin_request():
+        g.request_started = time.perf_counter()
+        g.upstream_label = None
 
     @app.before_request
     def enforce_api_key():
@@ -97,6 +127,31 @@ def create_app(settings: Settings, service_config: Service) -> Flask:
     def harden(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = response.headers.get("Cache-Control", "no-store")
+        return response
+
+    @app.after_request
+    def log_request(response):
+        """One line per request, so nothing reaches Seerr unrecorded.
+
+        ``REQUEST_LOG=errors`` (the default) logs only the ones that went wrong;
+        ``all`` logs every request at INFO; ``off`` disables it.
+        """
+        if settings.request_log == "off":
+            return response
+        failed = response.status_code >= 400
+        if not failed and settings.request_log != "all":
+            return response
+        started = getattr(g, "request_started", None)
+        elapsed = f"{(time.perf_counter() - started) * 1000:.0f}ms" if started else "?"
+        logger.log(
+            logging.WARNING if failed else logging.INFO,
+            "%s %s -> %s via %s in %s",
+            request.method,
+            redact(request.full_path.rstrip("?")),
+            response.status_code,
+            getattr(g, "upstream_label", None) or "proxy",
+            elapsed,
+        )
         return response
 
     # -- proxy's own endpoints --------------------------------------------

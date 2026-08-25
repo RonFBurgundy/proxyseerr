@@ -4,12 +4,20 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from flask import Response, jsonify, request
+from flask import Response, g, jsonify, request
 
 from . import namespace as ns
 from .config import ANIME, ENGLISH, Instance, Service, Settings
 from .routing import Router
-from .upstream import Upstream, build_headers, clean_params, to_flask_response
+from .upstream import (
+    AllInstancesFailed,
+    Upstream,
+    build_headers,
+    clean_params,
+    error_detail,
+    redact,
+    to_flask_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +51,13 @@ class ProxyService:
             payload = request.get_json(silent=True)
             if payload is not None:
                 return payload, True
+            logger.warning(
+                "%s %s declared %s but the body is not valid JSON; forwarding it "
+                "verbatim and skipping ID translation",
+                request.method,
+                redact(request.path),
+                content_type,
+            )
         return request.get_data(), False
 
     def json_body(self) -> Any:
@@ -81,6 +96,7 @@ class ProxyService:
             else:
                 data = body
 
+        g.upstream_label = instance.label
         response = self.upstream.request(
             instance,
             method,
@@ -90,6 +106,17 @@ class ProxyService:
             json_data=json_data,
             data=data,
         )
+        if response.status_code >= 400:
+            # Passed through to Seerr as-is, but never silently: this is where a
+            # rejected add or a wrong-instance lookup shows up.
+            logger.warning(
+                "%s rejected %s %s with HTTP %s: %s",
+                instance.label,
+                method,
+                redact(path),
+                response.status_code,
+                error_detail(response),
+            )
 
         offset = self.router.offset_for(instance)
         if offset == 0:
@@ -146,22 +173,54 @@ class ProxyService:
         return out
 
     # -- merged reads ------------------------------------------------------
-    def _fetch(self, instance: Instance, path: str, default: Any = None) -> Any:
-        return self.upstream.json_or_empty(
-            instance,
+    def _expect_list(self, payload: Any, instance: Instance, path: str) -> list:
+        if isinstance(payload, list):
+            return payload
+        if payload is not None and payload != {}:
+            logger.warning(
+                "%s answered %s with %s, expected a list; treating as empty",
+                instance.label,
+                redact(path),
+                type(payload).__name__,
+            )
+        return []
+
+    def _fetch_both(self, path: str) -> tuple[Any, Any]:
+        """Read ``path`` from both instances.
+
+        Returns each payload, or ``None`` for an instance that did not answer.
+        If neither answered the caller gets an error rather than a merged empty
+        result, so a total outage can never look like an empty library.
+        """
+        english, english_ok = self.upstream.fetch(
+            self.service.english,
             path,
-            headers=self.headers_for(instance),
-            params=self.params_for(instance),
-            default=default,
+            headers=self.headers_for(self.service.english),
+            params=self.params_for(self.service.english),
         )
+        anime, anime_ok = self.upstream.fetch(
+            self.service.anime,
+            path,
+            headers=self.headers_for(self.service.anime),
+            params=self.params_for(self.service.anime),
+        )
+        if not english_ok and not anime_ok:
+            raise AllInstancesFailed(path)
+        if not english_ok or not anime_ok:
+            missing = self.service.english if not english_ok else self.service.anime
+            logger.warning(
+                "Answering %s without %s's data; the result is incomplete",
+                redact(path),
+                missing.label,
+            )
+        return english, anime
 
     def merged_items(self) -> Response:
         path = self.kind.collection_path
         external_id = self.kind.external_id
-        english = self._fetch(self.service.english, path)
-        anime = self._fetch(self.service.anime, path)
-        english = english if isinstance(english, list) else []
-        anime = anime if isinstance(anime, list) else []
+        english_raw, anime_raw = self._fetch_both(path)
+        english = self._expect_list(english_raw, self.service.english, path)
+        anime = self._expect_list(anime_raw, self.service.anime, path)
 
         seen = {item.get(external_id) for item in english if isinstance(item, dict)}
         merged = list(english)
@@ -178,8 +237,7 @@ class ProxyService:
         return jsonify(merged)
 
     def merged_lookup(self, path: str) -> Response:
-        english = self._fetch(self.service.english, path, default=None)
-        anime = self._fetch(self.service.anime, path, default=None)
+        english, anime = self._fetch_both(path)
         offset = self.settings.id_offset
         external_id = self.kind.external_id
 
@@ -213,10 +271,9 @@ class ProxyService:
         return jsonify(merged)
 
     def merged_list(self, path: str, *, prefix_anime: bool = False) -> Response:
-        english = self._fetch(self.service.english, path)
-        anime = self._fetch(self.service.anime, path)
-        english = english if isinstance(english, list) else []
-        anime = anime if isinstance(anime, list) else []
+        english_raw, anime_raw = self._fetch_both(path)
+        english = self._expect_list(english_raw, self.service.english, path)
+        anime = self._expect_list(anime_raw, self.service.anime, path)
 
         encoded = ns.encode_list(anime, self.settings.id_offset)
         if prefix_anime:
@@ -224,8 +281,7 @@ class ProxyService:
         return jsonify(list(english) + list(encoded))
 
     def merged_queue(self, path: str) -> Response:
-        english = self._fetch(self.service.english, path, default=None)
-        anime = self._fetch(self.service.anime, path, default=None)
+        english, anime = self._fetch_both(path)
         offset = self.settings.id_offset
 
         def records(payload: Any) -> list:

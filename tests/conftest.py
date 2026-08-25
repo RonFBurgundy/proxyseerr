@@ -37,6 +37,7 @@ def make_settings(**overrides) -> Settings:
         allow_anonymous=True,
         max_body_bytes=DEFAULT_MAX_BODY_BYTES,
         log_level="CRITICAL",
+        request_log="errors",
     )
     base.update(overrides)
     return Settings(**base)

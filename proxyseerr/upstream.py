@@ -30,6 +30,54 @@ def redact(text: Any) -> str:
     return _SECRET_PATTERN.sub(r"\1<redacted>", str(text))
 
 
+def error_detail_from(payload: Any, limit: int = 300) -> str:
+    """A short, redacted description of an error payload."""
+    if isinstance(payload, list):
+        messages = [
+            str(item.get("errorMessage") or item.get("message"))
+            for item in payload
+            if isinstance(item, dict) and (item.get("errorMessage") or item.get("message"))
+        ]
+        if messages:
+            return redact("; ".join(messages))[:limit]
+    if isinstance(payload, dict):
+        message = payload.get("message") or payload.get("error")
+        if message:
+            return redact(str(message))[:limit]
+    if payload is None:
+        return "<no JSON body>"
+    return redact(str(payload))[:limit]
+
+
+def error_detail(response: Any, limit: int = 300) -> str:
+    """Explain an upstream error response.
+
+    Sonarr and Radarr say why they rejected a request in the body ("Invalid
+    quality profile", "Root folder does not exist"). Passing that through to
+    Seerr without recording it is how an add fails with nothing in the log.
+    """
+    try:
+        payload = response.json()
+    except ValueError:
+        text = (response.text or "").strip()
+        return redact(text[:limit]) if text else "<empty body>"
+    return error_detail_from(payload, limit)
+
+
+class AllInstancesFailed(RuntimeError):
+    """Every instance failed a merged read.
+
+    Answering with an empty list here would tell Seerr the library is empty,
+    which is worse than an error: it can mark everything unavailable. A 502
+    makes Seerr keep what it already knows.
+    """
+
+    def __init__(self, path: str):
+        self.public_message = "No instance could be reached"
+        self.log_message = f"Every instance failed for {redact(path)}; returning 502"
+        super().__init__(self.log_message)
+
+
 class UpstreamError(RuntimeError):
     """An upstream server could not be reached.
 
@@ -114,6 +162,31 @@ class Upstream:
             payload = None
         return payload, response.status_code
 
+    def fetch(
+        self,
+        instance: Instance,
+        path: str,
+        *,
+        headers: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[Any, bool]:
+        """GET that never raises, reporting whether the instance actually answered."""
+        try:
+            payload, status = self.json(instance, "GET", path, headers=headers, params=params)
+        except UpstreamError as exc:
+            logger.warning("%s", exc.log_message)
+            return None, False
+        if status >= 400 or payload is None:
+            logger.warning(
+                "%s returned HTTP %s for %s: %s",
+                instance.label,
+                status,
+                redact(path),
+                error_detail_from(payload),
+            )
+            return None, False
+        return payload, True
+
     def json_or_empty(
         self,
         instance: Instance,
@@ -123,21 +196,10 @@ class Upstream:
         params: dict[str, Any] | None = None,
         default: Any = None,
     ) -> Any:
-        """Best-effort GET used by the merge endpoints; never raises."""
-        fallback = [] if default is None else default
-        try:
-            payload, status = self.json(instance, "GET", path, headers=headers, params=params)
-        except UpstreamError as exc:
-            logger.warning("%s", exc.log_message)
-            return fallback
-        if status >= 400 or payload is None:
-            logger.warning(
-                "%s returned HTTP %s for %s; treating as empty",
-                instance.label,
-                status,
-                redact(path),
-            )
-            return fallback
+        """``fetch`` for callers that treat an unreachable instance as empty."""
+        payload, ok = self.fetch(instance, path, headers=headers, params=params)
+        if not ok:
+            return [] if default is None else default
         return payload
 
 
@@ -148,3 +210,4 @@ def to_flask_response(response: requests.Response) -> Response:
         if key.lower() in FORWARDED_RESPONSE_HEADERS
     ]
     return Response(response.content, status=response.status_code, headers=headers)
+

@@ -1,0 +1,205 @@
+"""Nothing may fail silently: every degraded path must leave a log line."""
+import logging
+
+import pytest
+import responses
+from requests.exceptions import ConnectionError as Down
+
+from conftest import ANI_URL, ENG_URL, OFFSET, SONARR_SERVICE, build_client, make_settings
+
+
+@pytest.fixture
+def loud(caplog):
+    caplog.set_level(logging.DEBUG, logger="proxyseerr")
+    return caplog
+
+
+@responses.activate
+def test_upstream_rejection_is_logged_with_the_reason(client, loud):
+    responses.add(
+        responses.GET, f"{ENG_URL}/api/v3/rootfolder", json=[{"id": 1, "path": "/data/tv"}]
+    )
+    responses.add(responses.GET, f"{ANI_URL}/api/v3/rootfolder", json=[])
+    responses.add(
+        responses.POST,
+        f"{ENG_URL}/api/v3/series",
+        status=400,
+        json=[{"errorMessage": "Invalid quality profile"}],
+    )
+
+    response = client.post(
+        "/api/v3/series", json={"title": "Severance", "rootFolderPath": "/data/tv"}
+    )
+    assert response.status_code == 400
+    assert "Invalid quality profile" in loud.text
+    assert "rejected POST /api/v3/series with HTTP 400" in loud.text
+
+
+@responses.activate
+def test_failed_requests_are_logged_by_default(client, loud):
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/system/status", status=500, json={})
+    client.get("/api/v3/system/status")
+    assert "GET /api/v3/system/status -> 500 via ENGLISH Sonarr" in loud.text
+
+
+@responses.activate
+def test_successful_requests_are_quiet_unless_request_log_is_all(loud):
+    _, quiet_client = build_client(make_settings(), SONARR_SERVICE)
+    _, loud_client = build_client(make_settings(request_log="all"), SONARR_SERVICE)
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/system/status", json={"version": "4"})
+
+    quiet_client.get("/api/v3/system/status")
+    assert "-> 200" not in loud.text
+
+    loud_client.get("/api/v3/system/status")
+    assert "GET /api/v3/system/status -> 200 via ENGLISH Sonarr" in loud.text
+
+
+@responses.activate
+def test_request_log_off_silences_even_failures(loud):
+    _, client = build_client(make_settings(request_log="off"), SONARR_SERVICE)
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/system/status", status=500, json={})
+    client.get("/api/v3/system/status")
+    assert "-> 500" not in loud.text
+
+
+@responses.activate
+def test_request_log_never_contains_the_api_key(loud):
+    _, client = build_client(make_settings(request_log="all"), SONARR_SERVICE)
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/system/status", json={"version": "4"})
+    client.get("/api/v3/system/status?apikey=supersecretvalue")
+    assert "supersecretvalue" not in loud.text
+    assert "apikey=<redacted>" in loud.text
+
+
+@responses.activate
+def test_unreachable_instance_names_itself_in_the_log(client, loud):
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/series", json=[])
+    responses.add(responses.GET, f"{ANI_URL}/api/v3/series", body=Down("refused"))
+    client.get("/api/v3/series")
+    assert "ANIME Sonarr unreachable" in loud.text
+
+
+@responses.activate
+def test_upstream_error_status_on_a_merge_read_is_logged(client, loud):
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/series", json=[])
+    responses.add(
+        responses.GET, f"{ANI_URL}/api/v3/series", status=401, json={"message": "Unauthorized"}
+    )
+    client.get("/api/v3/series")
+    assert "ANIME Sonarr returned HTTP 401" in loud.text
+    assert "Unauthorized" in loud.text
+
+
+@responses.activate
+def test_unexpected_payload_shape_is_logged(client, loud):
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/series", json=[])
+    responses.add(responses.GET, f"{ANI_URL}/api/v3/series", json={"unexpected": "object"})
+    client.get("/api/v3/series")
+    assert "expected a list" in loud.text
+
+
+def test_malformed_json_body_is_logged(client, loud):
+    client.post("/api/v3/series", data=b"{not json", content_type="application/json")
+    assert "not valid JSON" in loud.text
+
+
+@responses.activate
+def test_dropped_tag_is_logged(client, loud):
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/rootfolder", json=[])
+    responses.add(
+        responses.GET, f"{ANI_URL}/api/v3/rootfolder", json=[{"id": 1, "path": "/data/anime"}]
+    )
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/tag", json=[{"id": 3, "label": "wanted"}])
+    responses.add(responses.GET, f"{ANI_URL}/api/v3/tag", json=[])
+    responses.add(responses.POST, f"{ANI_URL}/api/v3/tag", status=500, json={})
+    responses.add(responses.POST, f"{ANI_URL}/api/v3/series", json={"id": 1})
+
+    client.post(
+        "/api/v3/series",
+        json={"title": "Naruto", "rootFolderPath": "/data/anime", "tags": [3]},
+    )
+    assert "Could not create tag 'wanted'" in loud.text
+    assert "dropped from this request" in loud.text
+
+
+def test_refused_path_is_logged(client, loud):
+    client.get("/config.xml")
+    assert "Refusing to forward path" in loud.text
+
+
+def test_unauthenticated_request_is_logged():
+    import logging as _logging
+
+    _, client = build_client(
+        make_settings(proxy_api_key="0123456789abcdef0123", allow_anonymous=False),
+        SONARR_SERVICE,
+    )
+    logger = _logging.getLogger("proxyseerr.app")
+    records = []
+    handler = _logging.Handler()
+    handler.emit = records.append
+    logger.addHandler(handler)
+    try:
+        client.get("/api/v3/series")
+    finally:
+        logger.removeHandler(handler)
+    assert any("Rejected unauthenticated" in r.getMessage() for r in records)
+
+
+def test_errors_are_json_not_html(client):
+    # A path outside the forwarding surface is refused by the proxy itself.
+    response = client.get("/config.xml")
+    assert response.status_code == 404
+    assert response.is_json
+    assert "error" in response.get_json()
+
+    # Requests to the proxy's own namespace are not forwarded either.
+    response = client.post("/proxy/health")
+    assert response.status_code == 404
+    assert response.is_json
+    assert "<html" not in response.get_data(as_text=True).lower()
+
+
+def test_unexpected_exception_is_logged_and_returns_json(client, loud, monkeypatch):
+    service = client.application.extensions["proxyseerr"]
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(service, "merged_items", boom)
+    response = client.get("/api/v3/series")
+    assert response.status_code == 500
+    assert response.get_json() == {"error": "Internal proxy error"}
+    assert "Unhandled error serving GET /api/v3/series" in loud.text
+    assert "kaboom" in loud.text
+
+
+@responses.activate
+def test_total_outage_is_an_error_not_an_empty_library(client, loud):
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/series", body=Down("refused"))
+    responses.add(responses.GET, f"{ANI_URL}/api/v3/series", body=Down("refused"))
+
+    response = client.get("/api/v3/series")
+    assert response.status_code == 502
+    assert response.get_json() == {"error": "No instance could be reached"}
+    assert "Every instance failed" in loud.text
+
+
+@responses.activate
+def test_partial_outage_returns_data_and_says_it_is_incomplete(client, loud):
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/series", json=[{"id": 1, "tvdbId": 9}])
+    responses.add(responses.GET, f"{ANI_URL}/api/v3/series", body=Down("refused"))
+
+    response = client.get("/api/v3/series")
+    assert response.status_code == 200
+    assert [s["id"] for s in response.get_json()] == [1]
+    assert "the result is incomplete" in loud.text
+    assert "ANIME Sonarr" in loud.text
+
+
+@responses.activate
+def test_total_outage_on_root_folders_is_also_an_error(client):
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/rootfolder", body=Down("refused"))
+    responses.add(responses.GET, f"{ANI_URL}/api/v3/rootfolder", body=Down("refused"))
+    assert client.get("/api/v3/rootfolder").status_code == 502
