@@ -258,3 +258,8 @@ docker run --rm -v "$PWD":/src -w /src python:3.12-slim \
 | `proxyseerr/service.py` | merge, translate, forward |
 | `proxyseerr/app.py` | the v3 route surface, auth, path allowlist |
 | `proxyseerr/healthcheck.py` | container healthcheck entrypoint |
+
+## License
+
+MIT — see [LICENSE](LICENSE). Provided as is, with no warranty; it talks to your
+media servers with admin credentials, so read `SECURITY.md` before exposing it.

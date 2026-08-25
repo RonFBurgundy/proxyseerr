@@ -39,6 +39,7 @@
   <DonateText/>
   <DonateLink/>
   <Requires/>
+  <License>MIT</License>
   <Config Name="Sonarr Proxy Port" Target="5000" Default="5000" Mode="tcp" Description="Port Seerr connects to for TV. Use this as the Sonarr port inside Seerr." Type="Port" Display="always" Required="true" Mask="false">5000</Config>
   <Config Name="Radarr Proxy Port" Target="5001" Default="5001" Mode="tcp" Description="Port Seerr connects to for movies. Use this as the Radarr port inside Seerr." Type="Port" Display="always" Required="false" Mask="false">5001</Config>
   <Config Name="Proxy API Key" Target="PROXY_API_KEY" Default="" Mode="" Description="Required. Generate with `openssl rand -hex 24` and enter the same value as the API key for both servers in Seerr. The proxy holds your Sonarr/Radarr admin keys, so it will not start unauthenticated unless PROXY_ALLOW_ANONYMOUS is set." Type="Variable" Display="always" Required="true" Mask="true"></Config>
