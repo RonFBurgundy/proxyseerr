@@ -27,6 +27,17 @@ def _env(name: str, default: str = "") -> str:
     return value.strip() if value and value.strip() else default
 
 
+def _env_literal(name: str, default: str) -> str:
+    """An env value taken exactly as written.
+
+    Unlike ``_env`` this preserves surrounding whitespace and treats an
+    explicitly empty value as a deliberate choice rather than "unset", so a
+    setting like a display prefix can be blanked and can end in a space.
+    """
+    value = os.getenv(name)
+    return default if value is None else value
+
+
 def _bool_env(name: str, default: bool = False) -> bool:
     raw = _env(name).lower()
     if not raw:
@@ -202,8 +213,8 @@ def load_settings() -> Settings:
     return Settings(
         services=services,
         id_offset=_int_env("ANIME_ID_OFFSET", DEFAULT_ID_OFFSET),
-        anime_path_match=_env("ANIME_ROOT_FOLDER_MATCH", "anime").lower(),
-        anime_label_prefix=_env("ANIME_LABEL_PREFIX", "[Anime] "),
+        anime_path_match=_env_literal("ANIME_ROOT_FOLDER_MATCH", "anime").strip().lower(),
+        anime_label_prefix=_env_literal("ANIME_LABEL_PREFIX", "[Anime] "),
         timeout=float(read_timeout),
         connect_timeout=float(min(_int_env("UPSTREAM_CONNECT_TIMEOUT", 5), read_timeout)),
         proxy_api_key=proxy_api_key,

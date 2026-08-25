@@ -113,3 +113,23 @@ def test_trailing_slashes_are_normalised(env):
     env.setenv("PROXY_API_KEY", KEY)
     env.setenv("ENGLISH_SONARR_URL", "http://eng:8989/")
     assert load_settings().service("sonarr").english.url == "http://eng:8989"
+
+
+def test_label_prefix_can_be_disabled_and_keeps_its_spacing(env):
+    set_sonarr(env)
+    env.setenv("PROXY_API_KEY", KEY)
+
+    assert load_settings().anime_label_prefix == "[Anime] "  # unset -> default
+
+    env.setenv("ANIME_LABEL_PREFIX", "")
+    assert load_settings().anime_label_prefix == ""  # explicitly off
+
+    env.setenv("ANIME_LABEL_PREFIX", "[Anime] ")
+    assert load_settings().anime_label_prefix == "[Anime] "  # space preserved
+
+
+def test_root_folder_keyword_can_be_disabled(env):
+    set_sonarr(env)
+    env.setenv("PROXY_API_KEY", KEY)
+    env.setenv("ANIME_ROOT_FOLDER_MATCH", "")
+    assert load_settings().anime_path_match == ""

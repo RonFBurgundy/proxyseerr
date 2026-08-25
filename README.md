@@ -141,13 +141,28 @@ pulling `latest` can never hand you a development build.
 | `SONARR_PROXY_PORT` | `5000` | Also accepts the legacy `PROXY_PORT`. |
 | `RADARR_PROXY_PORT` | `5001` | Must differ from the Sonarr port. |
 | `ANIME_ID_OFFSET` | `1000000000` | Size of the anime ID shift. Changing it after titles are tracked invalidates the IDs stored in Seerr. |
-| `ANIME_ROOT_FOLDER_MATCH` | `anime` | Fallback keyword for paths not owned by a known instance. |
-| `ANIME_LABEL_PREFIX` | `[Anime] ` | Prefix on anime profile names in Seerr's dropdowns. Root folder paths are never decorated. |
+| `ANIME_ROOT_FOLDER_MATCH` | `anime` | Fallback keyword for paths not owned by a known instance. Set empty to disable the fallback. |
+| `ANIME_LABEL_PREFIX` | `[Anime] ` | **Cosmetic only.** Prefixes anime profile *names* in Seerr's dropdowns. Set empty to turn off — see below. |
 | `UPSTREAM_TIMEOUT` | `20` | Seconds to wait for an instance to *respond*. Raise it on slow arrays — see Troubleshooting. |
 | `UPSTREAM_CONNECT_TIMEOUT` | `5` | Seconds to wait to *connect*. Kept short so a wrong host or port fails fast instead of holding a thread; capped at `UPSTREAM_TIMEOUT`. |
 | `MAX_BODY_BYTES` | `8388608` | Largest request body accepted. |
 | `REQUEST_LOG` | `errors` | `errors` logs every failed request, `all` logs every request, `off` disables the access log. |
 | `LOG_LEVEL` | `INFO` | `INFO` logs one line per routing decision. |
+
+### What `ANIME_LABEL_PREFIX` does and does not do
+
+It rewrites the `name` field of the anime instance's quality and language profiles in the
+response Seerr renders, and nothing else. It is **never sent upstream**: adds carry
+`qualityProfileId`, an integer, so a profile's name cannot reach Sonarr or Radarr, become a
+tag, or influence naming, download clients or release matching. Root folder paths are
+excluded on purpose, because Seerr echoes those back verbatim in the add payload.
+
+Set it to an empty value to switch it off — worth doing if your anime profiles already have
+names you can tell apart at a glance.
+
+Sonarr/Radarr **tags** are a separate thing entirely: the proxy merges `/api/v3/tag` without
+decorating anything, and only ever creates a tag when Seerr sends one that exists on the other
+instance. Configure no tags in Seerr and nothing is tagged.
 
 ## Seerr setup
 

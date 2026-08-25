@@ -291,3 +291,26 @@ def test_health_reports_both_instances(client):
     assert body["status"] == "degraded"
     assert body["instances"]["english"]["reachable"] is True
     assert body["instances"]["anime"]["reachable"] is False
+
+
+@responses.activate
+def test_no_prefix_when_it_is_disabled(client):
+    from conftest import SONARR_SERVICE
+
+    _, plain = build_client(make_settings(anime_label_prefix=""), SONARR_SERVICE)
+    responses.add(
+        responses.GET, f"{ENG_URL}/api/v3/qualityprofile", json=[{"id": 6, "name": "HD-1080p"}]
+    )
+    responses.add(
+        responses.GET, f"{ANI_URL}/api/v3/qualityprofile", json=[{"id": 6, "name": "Dual Audio"}]
+    )
+    body = plain.get("/api/v3/qualityprofile").get_json()
+    assert body[1] == {"id": OFFSET + 6, "name": "Dual Audio"}
+
+
+@responses.activate
+def test_tags_are_never_prefixed(client):
+    responses.add(responses.GET, f"{ENG_URL}/api/v3/tag", json=[{"id": 1, "label": "seerr"}])
+    responses.add(responses.GET, f"{ANI_URL}/api/v3/tag", json=[{"id": 1, "label": "seerr"}])
+    body = client.get("/api/v3/tag").get_json()
+    assert [t["label"] for t in body] == ["seerr", "seerr"]
