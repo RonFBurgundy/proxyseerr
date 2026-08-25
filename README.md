@@ -86,15 +86,26 @@ unauthenticated caller.
 
 ### Unraid
 
-Add this as a template repository under **Docker → Template Repositories**:
+Recent Unraid versions removed the **Template Repositories** field, so fetch the template onto the
+box directly. From the Unraid terminal:
 
-```
-https://github.com/RonFBurgundy/proxyseerr
+```bash
+curl -o /boot/config/plugins/dockerMan/templates-user/my-proxyseerr.xml \
+  https://raw.githubusercontent.com/RonFBurgundy/proxyseerr/main/unraid/proxyseerr.xml
 ```
 
-Then add the container from **Add Container → Template → proxyseerr**, or apply
-`unraid/proxyseerr.xml` directly. Fill in the proxy API key plus whichever service pairs you use. The
-WebUI button opens `/proxy/health`.
+Then **Docker → Add Container → Template → my-proxyseerr**, and fill in the proxy API key plus
+whichever service pairs you use. The WebUI button opens `/proxy/health`.
+
+Pin the version instead of tracking releases by changing the Repository field to
+`ghcr.io/ronfburgundy/proxyseerr:0.1.0`.
+
+> Passing the raw URL to `…/Docker/AddContainer?xmlTemplate=<url>` does **not** work — that
+> parameter only reads templates already present on the server.
+
+**The container needs no volumes.** It holds no state: nothing to map, nothing to back up.
+Every URL you enter must be reachable *from inside the container*, so on the default bridge
+network use the host's LAN IP (`http://192.168.1.x:8989`), never `localhost`.
 
 ### Docker Compose
 
@@ -105,12 +116,17 @@ docker compose up -d
 
 ### Image
 
-```
-ghcr.io/ronfburgundy/proxyseerr:latest
-```
+Multi-arch (`linux/amd64`, `linux/arm64`), built and published by GitHub Actions.
 
-Multi-arch (`linux/amd64`, `linux/arm64`), built and published by GitHub Actions on every push to
-`main` and on `v*` tags.
+| Tag | Moves when | Use it if |
+| --- | --- | --- |
+| `latest` | a new release is tagged | you want releases automatically |
+| `0.1.0` | never | you want a fixed version you can roll back to |
+| `0.1` | a patch release in that line | you want fixes but not feature changes |
+| `main` | every push to `main` | you are testing unreleased work |
+
+`latest` deliberately does **not** follow `main`. A push to `main` publishes only the `main` tag, so
+pulling `latest` can never hand you a development build.
 
 ## Configuration
 
