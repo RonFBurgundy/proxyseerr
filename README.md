@@ -194,16 +194,34 @@ Seerr caches the instance-side ID, so anything previously added keeps pointing a
 instance. For each affected title: delete it from the English Sonarr/Radarr (keep the files if you
 plan to re-import them on the anime side), delete the request in Seerr, then request it again.
 
-## Routing rules, in order
+## How the proxy picks an instance
 
-1. A namespaced `qualityProfileId`, `languageProfileId`, `rootFolderId` or `id` in the payload.
-2. A `rootFolderPath` that exists on exactly one of the two instances.
-3. `seriesType: "anime"` in the payload (Sonarr only).
-4. `rootFolderPath` containing `ANIME_ROOT_FOLDER_MATCH`.
-5. Otherwise the English instance.
+Not to be confused with **Seerr's override rules**, which are a different layer. Those decide
+*what parameters Seerr sends* — a root folder, a quality profile, tags. They cannot choose a
+server, which is the reason this proxy exists.
 
-Every decision is logged with its reason, so a misrouted title can be diagnosed from the container
-log alone.
+The proxy then takes whatever arrives and decides *which instance receives it*, using the first
+of these checks that answers:
+
+| # | Check | Typical source |
+| --- | --- | --- |
+| 1 | A namespaced `qualityProfileId`, `languageProfileId`, `rootFolderId` or `id` | a Seerr rule that sets an `[Anime]` profile |
+| 2 | A `rootFolderPath` that exists on exactly one instance | a Seerr rule that sets the anime root folder, or your server defaults |
+| 3 | `seriesType: "anime"` (Sonarr only) | Seerr's own metadata |
+| 4 | `rootFolderPath` containing `ANIME_ROOT_FOLDER_MATCH` | fallback for a path neither instance claims |
+| 5 | Otherwise, the English instance | nothing matched |
+
+Check 2 needs to read both instances' root folders. If either cannot be read, it is skipped with
+a warning rather than guessed at — an instance that cannot be asked is not an instance that
+answered "no".
+
+Every decision is logged with the check that produced it, so a misrouted title can be diagnosed
+from the container log alone:
+
+```
+Routing ADD 'Sailor Moon' to ANIME Sonarr (qualityProfileId is in the anime ID range)
+Routing ADD 'Family Guy' to ENGLISH Sonarr (root folder /data/media/tv exists only on the english instance)
+```
 
 ## Operations
 
